@@ -4,9 +4,14 @@ import customtkinter as ctk
 from PIL import Image
 from dotenv import load_dotenv
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from webscrapping.main import BrowsingForJobs
 import datetime
 import webbrowser
 import shutil
+import requests
+from io import BytesIO
 
 try:
     import psycopg2
@@ -88,6 +93,23 @@ def _pg_ensure_tables():
                     ml_processed_at  TIMESTAMPTZ,
                     ml_model_version TEXT,
                     embedding        VECTOR(1536)
+                );
+
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id SERIAL PRIMARY KEY,
+                    company_name TEXT,
+                    job_title TEXT,
+                    job_type TEXT,
+                    description TEXT,
+                    salary_min NUMERIC,
+                    salary_max NUMERIC,
+                    locate VARCHAR(255),
+                    deadline DATE,
+                    url TEXT,
+                    company_logo_path TEXT,
+                    keywords TEXT[],
+                    published DATE,
+                    similarity NUMERIC(5,2)
                 );
             """)
         conn.commit()
@@ -771,38 +793,91 @@ class JobFinderApp(ctk.CTk):
         scroll_frame.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 16))
         scroll_frame.grid_columnconfigure(0, weight=1)
 
-        # ── Sample data – add more dicts here to populate the carousel ────
-        sample_jobs = [
-            {
-                "company_logo_path": "avangrid.png",
-                "company_name": "Avangrid",
-                "job_title": "Lead Civil Engineer",
-                "salary": "$180.000/Y",
-                "location": "Portland - US",
-                "deadline": "20/06/2026",
-                "link_url": "https://iberdrola.wd3.myworkdayjobs.com/en-US/Iberdrola/details/Lead-Civil-Engineer_R-30218-1?ZCF_HCM_EEB_Subholding_Job_Posting_Anchor_Extended=59c5d91f3d96100fc6c399067e2d0001&locationRegionStateProvince=6fcc4198762c4a7c807486c849fe94ddhttps://iberdrola.wd3.myworkdayjobs.com/en-US/Iberdrola/details/Lead-Civil-Engineer_R-30218-1?ZCF_HCM_EEB_Subholding_Job_Posting_Anchor_Extended=59c5d91f3d96100fc6c399067e2d0001&locationRegionStateProvince=6fcc4198762c4a7c807486c849fe94dd",   # insert the real job URL here
-                "match_pct": 99,
-            },{
-                "company_logo_path": "cimpress.png",
-                "company_name": "Cimpress",
-                "job_title": "Senior Data Analyst",
-                "salary": "$120.000/Y",
-                "location": "Venlo - NL",
-                "deadline": "30/07/2026",
-                "link_url": "https://cimpress.wd3.myworkdayjobs.com/cimpress/job/Venlo-Senior-Data-Analyst_R-12345?location=Venlo",   # insert the real job URL here
-                "match_pct": 87,
-            },{
-                "company_logo_path": "iberdrola.png",
-                "company_name": "Iberdrola",
-                "job_title": "Renewable Energy Consultant",
-                "salary": "$150.000/Y",
-                "location": "Madrid - ES",
-                "deadline": "15/08/2026",
-                "link_url": "https://iberdrola.wd3.myworkdayjobs.com/en-US/Iberdrola/details/Renewable-Energy-Consultant_R-54321?ZCF_HCM_EEB_Subholding_Job_Posting_Anchor_Extended=abc123def456ghi789&locationRegionStateProvince=6fcc4198762c4a7c807486c849fe94dd",   # insert the real job URL here
-                "match_pct": 92,
-            },
+        # --------------------------------------------------
+        # TO DO: Checking if there are some jobs openings,
+        # else, just show the "Search for new jobs oppening" 
+        # buttom.
+        # --------------------------------------------------
 
-        ]
+        sample_jobs = []
+        def fetch_for_jobs():
+
+
+            with _pg_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT
+                            company_logo_path,
+                            company_name,
+                            job_title,
+                            salary_min,
+                            locate,
+                            deadline,
+                            url,
+                            similarity
+                        FROM jobs
+                        ORDER BY similarity DESC
+                    """)
+                    rows = cur.fetchall()
+
+            for row in rows:
+                (
+                    company_logo_path,
+                    company_name,
+                    job_title,
+                    salary_min,
+                    locate,
+                    deadline,
+                    url,
+                    similarity
+                ) = row
+
+                sample_jobs.append({
+                    "company_logo_path": company_logo_path or "",
+                    "company_name": company_name or "",
+                    "job_title": job_title or "",
+                    "salary": f"${salary_min:,.0f}/Y".replace(",", ".") if salary_min is not None else "",
+                    "location": locate or "",
+                    "deadline": deadline.strftime("%d/%m/%Y") if hasattr(deadline, "strftime") else str(deadline or ""),
+                    "link_url": url or "",
+                    "match_pct": similarity*100,
+                })
+        fetch_for_jobs()
+        ctk.CTkButton(
+            top_bar,
+            text="Search for new Jobs",            
+            font=("Segoe UI", 10, "bold"),
+            command=lambda: (
+                sample_jobs.clear(),  # substitua pelo nome real do dicionário
+                BrowsingForJobs(),
+
+            ),
+            width = 100,
+            height =50,
+            corner_radius=10,
+        ).grid(row=0, column=0, sticky="e", padx=20)
+
+        def clear_jobs_view():
+            sample_jobs.clear()
+
+            with _pg_connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("TRUNCATE TABLE jobs")
+                conn.commit()
+
+            for widget in scroll_frame.winfo_children():
+                widget.destroy()
+
+
+        ctk.CTkButton(
+            self.main_cointeiner,
+            text="Clean Jobs View",
+            font=("Segoe UI", 10),
+            command=clear_jobs_view,
+            width=50,
+            height=25,
+            corner_radius=5,
+        ).grid(row=1, column=0, sticky="e", padx=20)
 
         for idx, job in enumerate(sample_jobs):
             self._create_job_card(scroll_frame, idx, job, in_favorites=False)
@@ -829,19 +904,38 @@ class JobFinderApp(ctk.CTk):
 
         # ── Logo ─────────────────────────────────────────────────────────
         try:
+            response = requests.get(company_logo_path, timeout=10)
+            response.raise_for_status()
+
+            img = Image.open(BytesIO(response.content))
+
             logo_img = ctk.CTkImage(
-                light_image=Image.open(company_logo_path),
-                dark_image=Image.open(company_logo_path),
+                light_image=img,
+                dark_image=img,
                 size=(36, 36)
             )
+
             logo_lbl = ctk.CTkLabel(card, image=logo_img, text="")
+            logo_lbl.image = logo_img
+
         except Exception:
             logo_lbl = ctk.CTkLabel(
-                card, text=company_name[:2].upper(),
-                width=36, height=36, corner_radius=8,
-                fg_color=("gray85", "gray25"), font=("Segoe UI", 12, "bold")
+                card,
+                text=company_name[:2].upper(),
+                width=36,
+                height=36,
+                corner_radius=8,
+                fg_color=("gray85", "gray25"),
+                font=("Segoe UI", 12, "bold")
             )
-        logo_lbl.grid(row=0, column=0, padx=(16, 10), pady=(16, 4), sticky="nw")
+
+        logo_lbl.grid(
+            row=0,
+            column=0,
+            padx=(16, 10),
+            pady=(16, 4),
+            sticky="nw"
+        )
 
         # ── Header ───────────────────────────────────────────────────────
         hf = ctk.CTkFrame(card, fg_color="transparent")

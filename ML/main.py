@@ -16,7 +16,7 @@ from io import BytesIO
     In this document, I'm fetching the keywords at a curriculum
     and will send these to the database and WebScrapping process.
 
-    In the webscrapping processs, I'll use this selected words to 
+    In the webscrapping process, I'll use this selected words to 
     browse for jobs in the web.
 
     quick note: I know that this process is not the best way to do it, 
@@ -93,14 +93,9 @@ def ReadfileBytes():
     doc = nlp(new_text)
     return doc
 
-def ReturnSimilatity():
-
-    # Here, we"ve already found some 15 jobd opening. That'd be the last thing left, in theory.
-
-    avangrid = Document("./cv.docx")
-    JobOpeningContent = "\n".join(words.text for words in avangrid.paragraphs)
-
-
+def ReturnSimilatity(document):
+    # Here, we"ve already found some 15 jobs opening. That'd be the last thing left, in theory.
+    JobOpeningContent = document
     JobOpeningContent = re.sub(r'\n+', '\n', JobOpeningContent)
     JobOpeningContent = re.sub(r'[ \t]+', ' ', JobOpeningContent)
     JobOpeningContent = unicodedata.normalize('NFKC', JobOpeningContent)
@@ -119,17 +114,16 @@ def ReturnSimilatity():
     doc2= nlp(new_text2)
     doc1 = ReadfileBytes()
     similarity = doc1.similarity(doc2)
-    return print(similarity)
+    return similarity
 
 def KeyWords():
     text = ReadfileBytes()
     word_freq = Counter(token.text for token in text if token.is_alpha and token.text not in stopwords_pt)
     most_common_words = word_freq.most_common(10)
     comprehension = [word for word in most_common_words if len(word[0]) >2]
-    return print(comprehension)
-
+    return comprehension
 
 conn.close()
 
 if __name__ == "__main__":
-    KeyWords()
+    ReturnSimilatity()
