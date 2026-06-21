@@ -2,6 +2,7 @@ import tkinter as tk
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from webscrapping.main import BrowsingForJobs
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
@@ -11,7 +12,6 @@ import datetime
 import webbrowser
 import shutil
 import requests
-from tkinter import messagebox 
 from io import BytesIO
 import threading
 import importlib.util
@@ -246,9 +246,10 @@ def pg_delete_curriculum(row_id: int):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _call_browsing_for_jobs():
-    from webscrapping.main import BrowsingForJobs
-
-    BrowsingForJobs()
+    try:
+        BrowsingForJobs()
+    except Exception as e:
+       messagebox.showerror("Application Error", f"An unexpected database error occurred. See why: {e}")
 
 class JobFinderApp(ctk.CTk):
     def __init__(self):

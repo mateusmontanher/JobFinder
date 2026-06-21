@@ -39,6 +39,15 @@ conn = psycopg2.connect(
 
 cursor = conn.cursor()
 
+def _ensure_search_errors():
+    query = """
+        CREATE TABLE IF NOT EXISTS search_errors(
+            id SERIAL PRIMARY KEY,
+            bad_search_text TEXT
+        );    
+    """
+    cursor.execute(query)
+
 def generate_url(errors: int, search_error: str):
 
     # --------------------------------
@@ -113,7 +122,7 @@ def create_url(errors: int, search_error: str):
     bad_search = search_error
 
     url = generate_url(search_errors, bad_search)
-
+    _ensure_search_errors()
     query = """
             SELECT * FROM search_errors
             """
@@ -161,8 +170,9 @@ def BrowsingForJobs():
         # ------------------------------------------
         # Launching the browser and going to the url
         # ------------------------------------------
-        
-        browser = playwright.chromium.launch(headless=True)
+         
+        # The user must have installed the Google Chrome for runs out
+        browser = playwright.chromium.launch(channel="chrome",headless=True)
         page = browser.new_page()
         page.set_default_timeout(10000)  
         url = create_url(0, "")
