@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-ci.txt
+      - name: Verify imports and unit coverage
+        shell: pwsh
+        run: |
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          python -c "import UI.main; import ML.feedback; import webscrapping.service"
+          python -m pytest -q --cov=. --cov-config=.coveragerc
+
+  browsers:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, chrome, msedge]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - name: Install browser-test dependencies
+        run: python -m pip install -r requirements-ci.txt
+      - name: Install Firefox runtime
+        if: matrix.browser == 'firefox'
+        run: python -m playwright install firefox
+      - name: Run accessible card integration
+        shell: pwsh
+        run: |
+          $env:PYTHONDONTWRITEBYTECODE = "1"
+          $env:JOBFINDER_TEST_BROWSER = "${{ matrix.browser }}"
+          python -m pytest tests/test_browser_ui.py -q --run-browser

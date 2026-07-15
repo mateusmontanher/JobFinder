@@ -1,6 +1,6 @@
 # JobFinder
 
-A desktop application that reads your resume (CV), extracts what matters from it with NLP, scrapes LinkedIn for matching job openings, scores each opening against your resume, and presents the best matches in a native GUI — with favorites, match percentage, and one-click access to the posting.
+A local application that reads your resume (CV), extracts what matters with NLP, scrapes LinkedIn for matching job openings, scores each opening, and presents the best matches in native and browser job cards. Likes and dislikes are stored locally and future searches learn to reject jobs similar to previous dislikes.
 
 Everything runs locally as a Python desktop app backed by a PostgreSQL database.
 
@@ -12,10 +12,11 @@ Everything runs locally as a Python desktop app backed by a PostgreSQL database.
 |---|---|
 | Language | Python 3.13 |
 | GUI | [CustomTkinter](https://customtkinter.tomschimansky.com/) (modern themed Tkinter) + Pillow |
+| Interface localization | GNU gettext catalogs managed with Babel (English + pt-BR) |
 | Web scraping | [Playwright](https://playwright.dev/python/) (sync API, headless Chrome) |
 | NLP / ML | spaCy (`pt_core_news_md`), NLTK (stopwords, tokenization), python-docx |
 | Translation | deep-translator (Google Translate, pt ↔ en) |
-| Database | PostgreSQL via psycopg2 |
+| Database | PostgreSQL via psycopg2 (jobs/resumes) + SQLite (local feedback) |
 | Config | python-dotenv (`.env` file) |
 | Packaging | PyInstaller (single executable, launched via `JobFinder.bat`) |
 
@@ -44,7 +45,7 @@ The system is organized into three Python packages, each with a single responsib
 
 `UI/main.py` is the application entry point. It builds a `JobFinderApp` (subclass of `ctk.CTk`) with an animated collapsible sidebar and three views:
 
-- **Home** — job cards rendered from the `jobs` table, each showing company logo, title, location, description (expandable), a match-percentage arc drawn on a canvas, and a favorite toggle. A "search" action runs the whole scraping pipeline (`BrowsingForJobs`) in a background `threading.Thread` so the GUI stays responsive, then refreshes the cards from the database.
+- **Home** — job cards rendered from the `jobs` table, each showing title, location, an expandable full description, match percentage, asynchronous like/dislike controls, and the legacy favorite toggle. A "search" action runs the scraping pipeline in a background thread. "Open browser view" starts the same cards through a loopback-only local API.
 - **Favorites** — CRUD over the `favorites_jobs` table.
 - **Curriculum** — upload/download/replace/delete of resume files. The `.docx` file is stored as a binary blob (`BYTEA`) in the `curriculum` table, which is how the ML layer picks it up.
 
@@ -55,8 +56,8 @@ The UI module also owns the schema: `_pg_ensure_tables()` creates `jobs`, `favor
 `webscrapping/main.py` orchestrates the search pipeline:
 
 1. **Query generation** — asks `ML.KeyWords()` for the most frequent meaningful words in the resume, picks two at random, translates them pt → en, and builds a LinkedIn Jobs search URL (`/jobs/search/`) with hardcoded preferences (locations, remote/on-site filters `f_wt`, seniority filters `f_E`). Failed searches are recorded in a `search_errors` table so they aren't retried.
-2. **Scraping** — launches headless Chrome through Playwright, collects job IDs from `.job-search-card` elements, then visits each posting through LinkedIn's guest job-posting API (`/jobs-guest/jobs/api/jobPosting/{id}`) to extract title, company, location, logo, and full description.
-3. **Filtering & scoring** — titles are normalized and checked against a blacklist (e.g. mechanical/electrical/thermal roles) and deduplicated; descriptions are translated en → pt in 5k-character chunks, then scored against the resume with `ML.ReturnSimilatity()`. Only jobs with **similarity ≥ 0.6** are kept.
+2. **Scraping** — launches headless Chrome through Playwright and preserves the `.job-search-card` / `data-entity-urn` ID strategy. Guest-posting HTML is then fetched with a bounded worker pool and parsed locally for title, company, location, logo, public URL, and full description.
+3. **Filtering & scoring** — titles are normalized, blacklisted, and deduplicated. With fewer than 25 ratings, feedback filtering is skipped. Otherwise, each job is compared to great/bad sets using 60% description, 30% title, and 10% location; jobs at least 60% similar to a disliked job are rejected before resume compatibility scoring.
 4. **Persistence** — the `jobs` table is truncated and repopulated with the surviving openings (capped at 60).
 
 ### `ML/` — NLP / resume analysis
@@ -77,17 +78,20 @@ At import time the module downloads NLTK corpora (`stopwords`, `punkt_tab`) and 
 | `favorites_jobs` | User-favorited jobs (denormalized copy of card data) |
 | `search_errors` | Search sentences that returned no LinkedIn results |
 
+SQLite stores local learning signals in `great_jobs_openings` and `bad_jobs_openings`. Both tables contain the stable job `id`, title, full description, location, and creation timestamp. Switching a rating updates both tables atomically so the same job cannot be positive and negative.
+
 ## End-to-End Flow
 
 1. User uploads their `.docx` resume in the Curriculum view → stored in PostgreSQL.
 2. User triggers a search → background thread runs `BrowsingForJobs()`.
 3. ML extracts resume keywords → scraper builds a LinkedIn query → Playwright scrapes the postings.
 4. Each posting is translated to Portuguese and scored against the resume; matches ≥ 60% are saved to `jobs`.
-5. The Home view refreshes and renders the ranked job cards; the user favorites or opens postings in the browser.
+5. The Home view refreshes and renders ranked cards; ratings persist asynchronously to SQLite.
+6. Later scrapes load both rating tables once and remove disliked-neighbor jobs when at least 25 ratings exist.
 
 ## Setup
 
-Requirements: Python 3.13, PostgreSQL, and Google Chrome (Playwright launches with `channel="chrome"`).
+Requirements: Python 3.12 or 3.13, PostgreSQL, and Google Chrome (Playwright launches with `channel="chrome"`).
 
 ```bash
 pip install -r requirements.txt
@@ -109,6 +113,31 @@ Run the app:
 ```bash
 python UI/main.py
 ```
+
+The interface detects the operating-system language on startup. Use the language menu
+in the sidebar to switch the desktop UI between English and Portuguese without
+restarting. The browser view has the same selector in its header and updates in place.
+Unsupported locales fall back to English, while Portuguese variants such as `pt_PT`
+resolve to the bundled `pt_BR` catalog.
+
+To update translatable strings and compile catalogs after editing a `.po` file:
+
+```bash
+pybabel extract -F babel.cfg -o locales/jobfinder.pot .
+pybabel compile -d locales -D jobfinder
+```
+
+Adding another language requires only a standard
+`locales/<locale>/LC_MESSAGES/jobfinder.po` catalog. The source runtime can load the
+`.po` directly; compiling it to `.mo` keeps packaged startup fastest.
+
+Run the offline suite and coverage gate with:
+
+```bash
+python -m pytest -q --cov=. --cov-config=.coveragerc
+```
+
+The browser view binds to `127.0.0.1` on an ephemeral port. It validates the exact Host, Origin, session cookie, route, method, content type, payload fields, request size, and loopback peer; it grants no CORS access and accepts only a rating value from the browser. Events are written to `logs/app.log` without resume text, descriptions, credentials, user paths, or raw third-party exceptions.
 
 Tables are created automatically on first run. `JobFinder.bat` launches `pythonw main.py` from its own directory — it expects a root-level `main.py` (not tracked in the repo) that boots the UI. All modules resolve bundled resources via `sys._MEIPASS`, so the app also works when packaged with PyInstaller.
 
