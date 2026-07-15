@@ -2,6 +2,17 @@ import tkinter as tk
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from concurrent.futures import Future, ThreadPoolExecutor
+import logging
+
+from jobfinder.feedback import (
+    RatedJob,
+    RatingService,
+    SQLiteRatingRepository,
+    stable_job_identifier,
+)
+from jobfinder.logging_config import configure_logging
+from UI.api import LocalApiServer
 from webscrapping.main import BrowsingForJobs
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
@@ -15,6 +26,9 @@ import requests
 from io import BytesIO
 import threading
 import importlib.util
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def resource_path(*parts):
@@ -81,6 +95,8 @@ def _pg_ensure_tables():
                     link_url          TEXT,
                     match_pct         INTEGER,
                     company_logo_path TEXT,
+                    source_id         TEXT,
+                    description       TEXT,
                     created_at        TIMESTAMPTZ DEFAULT now()
                 );
                 CREATE TABLE IF NOT EXISTS curriculum (
@@ -109,6 +125,7 @@ def _pg_ensure_tables():
 
                 CREATE TABLE IF NOT EXISTS jobs (
                     id SERIAL PRIMARY KEY,
+                    source_id TEXT,
                     company_name TEXT,
                     job_title TEXT,
                     job_type TEXT,
@@ -123,6 +140,10 @@ def _pg_ensure_tables():
                     published DATE,
                     similarity NUMERIC(5,2)
                 );
+
+                ALTER TABLE favorites_jobs ADD COLUMN IF NOT EXISTS source_id TEXT;
+                ALTER TABLE favorites_jobs ADD COLUMN IF NOT EXISTS description TEXT;
+                ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_id TEXT;
             """)
         conn.commit()
 
@@ -136,12 +157,20 @@ def pg_add_favorite(job: dict):
             cur.execute("""
                 INSERT INTO favorites_jobs
                     (company_name, job_title, salary, location,
-                     deadline, link_url, match_pct, company_logo_path)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                     deadline, link_url, match_pct, company_logo_path,
+                     source_id, description)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (job.get("company_name"), job.get("job_title"),
                   job.get("salary"), job.get("location"),
                   job.get("deadline"), job.get("link_url"),
-                  job.get("match_pct"), job.get("company_logo_path")))
+                  job.get("match_pct"), job.get("company_logo_path"),
+                  stable_job_identifier(
+                      job.get("id"),
+                      title=job.get("job_title", ""),
+                      description=job.get("description", ""),
+                      location=job.get("location", ""),
+                  ),
+                  job.get("description", "")))
         conn.commit()
 
 
@@ -160,7 +189,8 @@ def pg_load_favorites() -> list[dict]:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT company_name, job_title, salary, location,
-                       deadline, link_url, match_pct, company_logo_path
+                       deadline, link_url, match_pct, company_logo_path,
+                       source_id AS id, description
                 FROM favorites_jobs ORDER BY created_at DESC
             """)
             cols = [d[0] for d in cur.description]
@@ -256,6 +286,24 @@ class JobFinderApp(ctk.CTk):
         super().__init__()
         self.title("JobFinder")
         self.geometry("900x600")
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="jobfinder-ui")
+        self._rating_service: RatingService | None = None
+        self._local_api: LocalApiServer | None = None
+
+        try:
+            self._rating_service = RatingService(SQLiteRatingRepository())
+        except Exception as error:
+            LOGGER.error("Local feedback database is unavailable (%s)", type(error).__name__)
+
+        if self._rating_service is not None:
+            try:
+                self._local_api = LocalApiServer(ratings=self._rating_service)
+                self._local_api.start()
+            except Exception as error:
+                LOGGER.error("Local browser API could not start (%s)", type(error).__name__)
+                self._local_api = None
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Sidebar animation state
         self._sidebar_visible = True
@@ -273,6 +321,62 @@ class JobFinderApp(ctk.CTk):
 
         self.Sidebar()
         self.MainConteiner()
+
+    def _on_close(self):
+        if self._local_api is not None:
+            try:
+                self._local_api.stop()
+            except Exception as error:
+                LOGGER.error("Local browser API shutdown failed (%s)", type(error).__name__)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        self.destroy()
+
+    def report_callback_exception(self, exception_type, exception, traceback):
+        del exception, traceback
+        LOGGER.error("Unhandled UI callback was contained (%s)", exception_type.__name__)
+        messagebox.showerror("Application error", "The action could not be completed. See logs/app.log.")
+
+    def _open_browser_view(self):
+        if self._local_api is None:
+            messagebox.showwarning("Browser view unavailable", "The local browser service could not be started.")
+            return
+        webbrowser.open(self._local_api.url)
+
+    def _rating_statuses(self) -> dict[str, str]:
+        if self._rating_service is None:
+            return {}
+        try:
+            return self._rating_service.snapshot().status_map()
+        except Exception as error:
+            LOGGER.error("Could not load rating status (%s)", type(error).__name__)
+            return {}
+
+    def _persist_rating_async(self, job: RatedJob, rating: str | None, callback):
+        if self._rating_service is None:
+            callback(False)
+            return
+
+        def persist():
+            if rating is None:
+                self._rating_service.clear(job.identifier)
+            else:
+                self._rating_service.rate(job, rating)
+
+        future = self._executor.submit(persist)
+
+        def completed(result: Future):
+            try:
+                error = result.exception()
+            except Exception as callback_error:
+                error = callback_error
+            if error is not None:
+                LOGGER.error("Asynchronous rating failed for %s (%s)", job.identifier, type(error).__name__)
+            try:
+                self.after(0, callback, error is None)
+            except (RuntimeError, tk.TclError):
+                pass
+
+        future.add_done_callback(completed)
 
     # ─────────────────────────────────────────────────────────────────────────
     #  SIDEBAR
@@ -521,7 +625,15 @@ class JobFinderApp(ctk.CTk):
                              ).grid(row=0, column=0, pady=40)
                 return
 
+            rating_statuses = self._rating_statuses()
             for idx, job in enumerate(favorites):
+                job["id"] = stable_job_identifier(
+                    job.get("id"),
+                    title=job.get("job_title", ""),
+                    description=job.get("description", ""),
+                    location=job.get("location", ""),
+                )
+                job["rating"] = rating_statuses.get(job["id"])
                 self._create_job_card(scroll, idx, job, in_favorites=True)
 
         ctk.CTkButton(
@@ -792,7 +904,19 @@ class JobFinderApp(ctk.CTk):
             width=130, height=34, corner_radius=17,
             font=("Segoe UI", 13), command=toggle_theme,
         )
-        theme_btn.grid(row=0, column=1, sticky="e")
+        theme_btn.grid(row=0, column=2, sticky="e")
+
+        browser_btn = ctk.CTkButton(
+            top_bar,
+            text="Open browser view",
+            width=150,
+            height=34,
+            corner_radius=17,
+            font=("Segoe UI", 13),
+            command=self._open_browser_view,
+            state="normal" if self._local_api is not None else "disabled",
+        )
+        browser_btn.grid(row=0, column=1, sticky="e", padx=(8, 8))
  
         # ── Subtitle ──────────────────────────────────────────────────────
         ctk.CTkLabel(
@@ -837,8 +961,10 @@ class JobFinderApp(ctk.CTk):
             try:
                 with _pg_connect() as conn:
                     with conn.cursor() as cur:
+                        cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS source_id TEXT")
                         cur.execute("""
                             SELECT
+                                source_id,
                                 company_logo_path,
                                 company_name,
                                 job_title,
@@ -852,11 +978,19 @@ class JobFinderApp(ctk.CTk):
                             ORDER BY similarity DESC NULLS LAST
                         """)
                         rows = cur.fetchall()
- 
-                for (company_logo_path, company_name, job_title,
+
+                rating_statuses = self._rating_statuses()
+                for (source_id, company_logo_path, company_name, job_title,
                      salary_min, locate, deadline, url,
                      similarity, description) in rows:
+                    job_id = stable_job_identifier(
+                        source_id,
+                        title=job_title or "",
+                        description=description or "",
+                        location=locate or "",
+                    )
                     sample_jobs.append({
+                        "id":                   job_id,
                         "company_logo_path": company_logo_path or "",
                         "company_name":      company_name      or "",
                         "job_title":         job_title         or "",
@@ -870,9 +1004,10 @@ class JobFinderApp(ctk.CTk):
                         "match_pct":         int(similarity * 100)
                                              if similarity is not None else 0,
                         "description":       description       or "",
+                        "rating":            rating_statuses.get(job_id),
                     })
             except Exception as exc:
-                print(f"[JobFinder] DB fetch error: {exc}")
+                LOGGER.error("Job-card database fetch failed (%s)", type(exc).__name__)
  
             render_jobs()
  
@@ -989,6 +1124,12 @@ class JobFinderApp(ctk.CTk):
         link_url          = job.get("link_url", "")
         match_pct         = job.get("match_pct", 0)
         description       = job.get("description", "")
+        job_id = stable_job_identifier(
+            job.get("id"),
+            title=job_title,
+            description=description,
+            location=location,
+        )
  
         card = ctk.CTkFrame(parent, corner_radius=16,
                             border_width=1, border_color=("gray80", "gray28"))
@@ -1104,27 +1245,113 @@ class JobFinderApp(ctk.CTk):
             hover_color=("gray90", "gray20"), height=26,
             command=lambda u=link_url: webbrowser.open(u) if u else None,
         ).grid(row=0, column=0, sticky="w")
+
+        feedback_frame = ctk.CTkFrame(action_row, fg_color="transparent")
+        feedback_frame.grid(row=0, column=1, sticky="e", padx=(4, 0))
+        rating_state = {
+            "value": job.get("rating") if job.get("rating") in ("great", "bad") else None,
+            "pending": False,
+        }
+        rated_job = RatedJob(job_id, job_title, description, location)
+
+        great_btn = ctk.CTkButton(
+            feedback_frame,
+            text="👍",
+            width=36,
+            height=36,
+            corner_radius=18,
+            font=("Segoe UI Emoji", 16),
+            fg_color="transparent",
+            hover_color=("gray88", "gray22"),
+            takefocus=True,
+        )
+        great_btn.grid(row=0, column=0, padx=(0, 2))
+
+        bad_btn = ctk.CTkButton(
+            feedback_frame,
+            text="👎",
+            width=36,
+            height=36,
+            corner_radius=18,
+            font=("Segoe UI Emoji", 16),
+            fg_color="transparent",
+            hover_color=("gray88", "gray22"),
+            takefocus=True,
+        )
+        bad_btn.grid(row=0, column=1, padx=(2, 0))
+
+        def _render_rating():
+            great_active = rating_state["value"] == "great"
+            bad_active = rating_state["value"] == "bad"
+            great_btn.configure(
+                fg_color=("#d8f3dc", "#14532d") if great_active else "transparent",
+                text_color=("#166534", "#bbf7d0") if great_active else ("gray35", "gray75"),
+                state="disabled" if rating_state["pending"] else "normal",
+            )
+            bad_btn.configure(
+                fg_color=("#fee2e2", "#7f1d1d") if bad_active else "transparent",
+                text_color=("#991b1b", "#fecaca") if bad_active else ("gray35", "gray75"),
+                state="disabled" if rating_state["pending"] else "normal",
+            )
+
+        def _toggle_rating(requested: str):
+            if rating_state["pending"]:
+                return
+            previous = rating_state["value"]
+            next_rating = None if previous == requested else requested
+            rating_state["value"] = next_rating
+            rating_state["pending"] = True
+            _render_rating()
+
+            def finished(success: bool):
+                try:
+                    if not success:
+                        rating_state["value"] = previous
+                        messagebox.showerror("Rating error", "The rating could not be saved locally.")
+                    rating_state["pending"] = False
+                    _render_rating()
+                except tk.TclError:
+                    pass
+
+            self._persist_rating_async(rated_job, next_rating, finished)
+
+        great_btn.configure(command=lambda: _toggle_rating("great"))
+        bad_btn.configure(command=lambda: _toggle_rating("bad"))
+        _render_rating()
  
         desc_btn = ctk.CTkButton(
-            action_row, text="^",
+            action_row, text="⌄",
             width=36, height=36, corner_radius=18,
             font=("Segoe UI", 15, "bold"), fg_color="transparent",
             text_color=("gray50", "gray60"),
             hover_color=("gray88", "gray22"),
+            takefocus=True,
         )
-        desc_btn.grid(row=0, column=1, sticky="e", padx=(4, 0))
+        desc_btn.grid(row=0, column=2, sticky="e", padx=(4, 0))
  
         def _toggle_desc(_ds=desc_state, _df=desc_frame, _btn=desc_btn):
             _ds["visible"] = not _ds["visible"]
             if _ds["visible"]:
                 _df.grid(row=4, column=0, columnspan=3,
                          sticky="ew", padx=16, pady=(0, 12))
-                _btn.configure(text="v")
+                _btn.configure(text="⌃")
             else:
                 _df.grid_remove()
-                _btn.configure(text="^")
+                _btn.configure(text="⌄")
  
         desc_btn.configure(command=_toggle_desc)
+
+        def _keyboard_activate(_event, command):
+            command()
+            return "break"
+
+        for button, command in (
+            (great_btn, lambda: _toggle_rating("great")),
+            (bad_btn, lambda: _toggle_rating("bad")),
+            (desc_btn, _toggle_desc),
+        ):
+            button.bind("<Return>", lambda event, cmd=command: _keyboard_activate(event, cmd), add=True)
+            button.bind("<space>", lambda event, cmd=command: _keyboard_activate(event, cmd), add=True)
  
         try:
             initially_fav = pg_is_favorite(company_name, job_title)
@@ -1141,7 +1368,7 @@ class JobFinderApp(ctk.CTk):
             text_color=("gold", "gold") if fav_state["active"] else ("gray50", "gray60"),
             hover_color=("gray88", "gray22"),
         )
-        fav_btn.grid(row=0, column=2, sticky="e")
+        fav_btn.grid(row=0, column=3, sticky="e")
  
         def toggle_fav(_btn=fav_btn, _st=fav_state, _job=job, _card=card):
             _st["active"] = not _st["active"]
@@ -1172,6 +1399,16 @@ class JobFinderApp(ctk.CTk):
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+def main() -> int:
+    configure_logging()
+    try:
+        root = JobFinderApp()
+        root.mainloop()
+        return 0
+    except Exception as error:
+        LOGGER.error("Application startup failed safely (%s)", type(error).__name__)
+        return 1
+
+
 if __name__ == "__main__":
-    root = JobFinderApp()
-    root.mainloop()
+    raise SystemExit(main())

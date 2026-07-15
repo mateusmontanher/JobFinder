@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>JobFinder results</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Local results</p>
+        <h1>JobFinder</h1>
+      </div>
+      <button id="refresh-jobs" class="secondary-button" type="button">Refresh jobs</button>
+    </header>
+
+    <p id="status" class="status" role="status" aria-live="polite">Loading jobs…</p>
+    <main id="job-list" class="job-list" aria-busy="true"></main>
+
+    <template id="job-card-template">
+      <article class="job-card">
+        <div class="card-heading">
+          <div>
+            <p class="company"></p>
+            <h2 class="title"></h2>
+            <p class="location"></p>
+          </div>
+          <p class="match-score" aria-label="Resume match"></p>
+        </div>
+
+        <div class="card-actions">
+          <a class="job-link" target="_blank" rel="noopener noreferrer">Open posting</a>
+          <div class="feedback-actions" role="group" aria-label="Rate this job">
+            <button class="rating-button great-button" type="button" aria-pressed="false">
+              <span aria-hidden="true">👍</span><span class="visually-hidden">Like this job</span>
+            </button>
+            <button class="rating-button bad-button" type="button" aria-pressed="false">
+              <span aria-hidden="true">👎</span><span class="visually-hidden">Dislike this job</span>
+            </button>
+          </div>
+          <button class="description-button" type="button" aria-expanded="false">
+            <span>Full description</span><span class="arrow" aria-hidden="true">⌄</span>
+          </button>
+        </div>
+
+        <section class="description-panel" aria-hidden="true">
+          <div class="description-content"></div>
+        </section>
+      </article>
+    </template>
+  </body>
+</html>
