@@ -6,10 +6,11 @@ include =
     ML/feedback.py
     UI/api.py
     jobfinder/feedback/*
+    jobfinder/i18n/*
     webscrapping/collector.py
     webscrapping/repositories.py
     webscrapping/service.py
-fail_under = 80
+fail_under = 90
 precision = 1
 show_missing = True
 skip_empty = True

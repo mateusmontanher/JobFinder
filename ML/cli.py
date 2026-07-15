@@ -8,6 +8,8 @@ import json
 import logging
 from pathlib import Path
 
+from jobfinder.i18n import BabelPoCatalogRepository, TranslationService
+
 from .extraction import SpacyProfileExtractor
 from .matching import CompatibilityScorer, MatchConfig
 from .repositories import FileResumeRepository, iter_job_records, job_fields
@@ -15,12 +17,16 @@ from .repositories import FileResumeRepository, iter_job_records, job_fields
 LOGGER = logging.getLogger("jobfinder.ml")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Match a local resume against local job records")
-    parser.add_argument("--resume", type=Path, required=True, help="JSON, CSV, TXT, or DOCX resume")
-    parser.add_argument("--jobs", type=Path, required=True, help="Job file or local folder")
-    parser.add_argument("--output", type=Path, required=True, help="JSON or CSV report")
-    parser.add_argument("--threshold", type=float, default=60.0, help="Minimum score percentage")
+def build_parser(translations: TranslationService | None = None) -> argparse.ArgumentParser:
+    service = translations or TranslationService(
+        BabelPoCatalogRepository(Path(__file__).resolve().parents[1] / "locales")
+    )
+    _ = service.gettext
+    parser = argparse.ArgumentParser(description=_("Match a local resume against local job records"))
+    parser.add_argument("--resume", type=Path, required=True, help=_("JSON, CSV, TXT, or DOCX resume"))
+    parser.add_argument("--jobs", type=Path, required=True, help=_("Job file or local folder"))
+    parser.add_argument("--output", type=Path, required=True, help=_("JSON or CSV report"))
+    parser.add_argument("--threshold", type=float, default=60.0, help=_("Minimum score percentage"))
     return parser
 
 

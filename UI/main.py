@@ -17,6 +17,7 @@ from jobfinder.feedback import (
     SQLiteRatingRepository,
     stable_job_identifier,
 )
+from jobfinder.i18n import BabelPoCatalogRepository, TranslationService
 from jobfinder.logging_config import configure_logging
 from UI.api import LocalApiServer
 from webscrapping.main import BrowsingForJobs
@@ -94,6 +95,13 @@ def _enable_button_keyboard_focus(button: ctk.CTkButton) -> None:
 def resource_path(*parts):
     base_dir = getattr(sys, "_MEIPASS", os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     return os.path.join(base_dir, *parts)
+
+
+def create_translation_service(requested_locale: str | None = None) -> TranslationService:
+    return TranslationService(
+        BabelPoCatalogRepository(resource_path("locales")),
+        requested_locale=requested_locale,
+    )
 
 
 try:
@@ -343,14 +351,16 @@ def _call_browsing_for_jobs():
         raise
 
 class JobFinderApp(ctk.CTk):
-    def __init__(self):
+    def __init__(self, translations: TranslationService | None = None):
         super().__init__()
+        self.translations = translations or create_translation_service()
         self.title("JobFinder")
         self.geometry("900x600")
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="jobfinder-ui")
         self._image_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="jobfinder-images")
         self._rating_service: RatingService | None = None
         self._local_api: LocalApiServer | None = None
+        self._active_view = "home"
 
         try:
             self._rating_service = RatingService(SQLiteRatingRepository())
@@ -359,7 +369,10 @@ class JobFinderApp(ctk.CTk):
 
         if self._rating_service is not None:
             try:
-                self._local_api = LocalApiServer(ratings=self._rating_service)
+                self._local_api = LocalApiServer(
+                    ratings=self._rating_service,
+                    translations=self.translations.fork(self.translations.locale),
+                )
                 self._local_api.start()
             except Exception as error:
                 LOGGER.error("Local browser API could not start (%s)", type(error).__name__)
@@ -384,6 +397,31 @@ class JobFinderApp(ctk.CTk):
         self.Sidebar()
         self.MainConteiner()
 
+    def _(self, message: str, **values) -> str:
+        return self.translations.gettext(message, **values)
+
+    def ngettext(self, singular: str, plural: str, count: int, **values) -> str:
+        return self.translations.ngettext(singular, plural, count, **values)
+
+    def _change_language(self, language_name: str) -> None:
+        locale_code = self._language_name_to_code.get(language_name)
+        if locale_code is None or locale_code == self.translations.locale:
+            return
+        self.translations.set_locale(locale_code)
+        self.after_idle(self._rebuild_translated_ui)
+
+    def _rebuild_translated_ui(self) -> None:
+        for widget in self.side_bar.winfo_children():
+            widget.destroy()
+        self.Sidebar()
+        self._clear_main()
+        if self._active_view == "favorites":
+            self._build_favorites_view()
+        elif self._active_view == "curriculums":
+            self._build_curriculum_view()
+        else:
+            self.MainConteiner()
+
     def _on_close(self):
         if self._local_api is not None:
             try:
@@ -397,11 +435,17 @@ class JobFinderApp(ctk.CTk):
     def report_callback_exception(self, exception_type, exception, traceback):
         del exception, traceback
         LOGGER.error("Unhandled UI callback was contained (%s)", exception_type.__name__)
-        messagebox.showerror("Application error", "The action could not be completed. See logs/app.log.")
+        messagebox.showerror(
+            self._("Application error"),
+            self._("The action could not be completed. See logs/app.log."),
+        )
 
     def _open_browser_view(self):
         if self._local_api is None:
-            messagebox.showwarning("Browser view unavailable", "The local browser service could not be started.")
+            messagebox.showwarning(
+                self._("Browser view unavailable"),
+                self._("The local browser service could not be started."),
+            )
             return
         webbrowser.open(self._local_api.url)
 
@@ -482,7 +526,7 @@ class JobFinderApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.side_bar,
-            text=os.getenv("USERNAME", "User"),
+            text=os.getenv("USERNAME", self._("User")),
             font=("Segoe UI", 22, "bold")
         ).pack()
 
@@ -493,25 +537,45 @@ class JobFinderApp(ctk.CTk):
             text_color=("gray45", "gray65")
         ).pack(pady=(0, 20))
 
+        languages = self.translations.available_languages()
+        self._language_name_to_code = {name: code for code, name in languages}
+        current_name = next(
+            (name for code, name in languages if code == self.translations.locale),
+            "English",
+        )
+        ctk.CTkLabel(
+            self.side_bar,
+            text=self._("Language"),
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w", padx=20, pady=(0, 4))
+        language_menu = ctk.CTkOptionMenu(
+            self.side_bar,
+            values=list(self._language_name_to_code),
+            command=self._change_language,
+            width=170,
+        )
+        language_menu.set(current_name)
+        language_menu.pack(fill="x", padx=15, pady=(0, 16))
+
         # ── Divider ───────────────────────────────────────────────────────
         ctk.CTkFrame(self.side_bar, height=2, fg_color=("gray80", "gray25")
                      ).pack(fill="x", padx=20, pady=(0, 20))
 
         # ── Navigation ────────────────────────────────────────────────────
         ctk.CTkButton(
-            self.side_bar, text="🏠  Home",
+            self.side_bar, text=f"🏠  {self._('Home')}",
             anchor="w", height=40, corner_radius=10,
             command=self._show_home
         ).pack(fill="x", padx=15, pady=5)
 
         ctk.CTkButton(
-            self.side_bar, text="★  Favorites",
+            self.side_bar, text=f"★  {self._('Favorites')}",
             anchor="w", height=40, corner_radius=10,
             command=self._show_favorites
         ).pack(fill="x", padx=15, pady=5)
 
         ctk.CTkButton(
-            self.side_bar, text="📚  Curriculums",
+            self.side_bar, text=f"📚  {self._('Curriculums')}",
             anchor="w", height=40, corner_radius=10,
             command=self._show_curriculum
         ).pack(fill="x", padx=15, pady=5)
@@ -522,7 +586,7 @@ class JobFinderApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.side_bar,
-            text=f"Developed by {os.getenv('ME', 'Me')}",
+            text=self._("Developed by {name}", name=os.getenv("ME", "Me")),
             font=("Segoe UI", 11),
             text_color=("gray50", "gray60")
         ).pack(side="bottom", pady=(0, 15))
@@ -585,14 +649,17 @@ class JobFinderApp(ctk.CTk):
             w.destroy()
 
     def _show_home(self):
+        self._active_view = "home"
         self._clear_main()
         self.MainConteiner()
 
     def _show_favorites(self):
+        self._active_view = "favorites"
         self._clear_main()
         self._build_favorites_view()
 
     def _show_curriculum(self):
+        self._active_view = "curriculums"
         self._clear_main()
         self._build_curriculum_view()
 
@@ -607,7 +674,7 @@ class JobFinderApp(ctk.CTk):
         # ── Title ─────────────────────────────────────────────────────────
         ctk.CTkLabel(
             self.main_cointeiner,
-            text="★  Favorites",
+            text=f"★  {self._('Favorites')}",
             font=("Segoe UI", 26, "bold"),
             anchor="w"
         ).grid(row=0, column=0, sticky="w", padx=24, pady=(18, 0))
@@ -618,16 +685,16 @@ class JobFinderApp(ctk.CTk):
         form_frame.grid(row=1, column=0, sticky="ew", padx=24, pady=(10, 6))
         form_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(form_frame, text="Database connection",
+        ctk.CTkLabel(form_frame, text=self._("Database connection"),
                      font=("Segoe UI", 12, "bold")).grid(
             row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 8))
 
         fields = [
-            ("Host",     "host"),
-            ("Port",     "port"),
-            ("DB Name",  "dbname"),
-            ("User",     "user"),
-            ("Password", "password"),
+            (self._("Host"),     "host"),
+            (self._("Port"),     "port"),
+            (self._("DB Name"),  "dbname"),
+            (self._("User"),     "user"),
+            (self._("Password"), "password"),
         ]
         entries: dict[str, ctk.CTkEntry] = {}
 
@@ -655,15 +722,23 @@ class JobFinderApp(ctk.CTk):
             _DB_CREDENTIALS["user"]     = entries["user"].get().strip()    or _DB_CREDENTIALS["user"]
             _DB_CREDENTIALS["password"] = entries["password"].get().strip()
 
-            status_lbl.configure(text="Connecting…", text_color=("gray45", "gray65"))
+            status_lbl.configure(text=self._("Connecting…"), text_color=("gray45", "gray65"))
             self.update_idletasks()
 
             try:
                 favorites = pg_load_favorites()
-                status_lbl.configure(text=f"✅  Connected — {len(favorites)} favorite(s) loaded.",
+                status_lbl.configure(text="✅  " + self.ngettext(
+                                         "{count} favorite loaded.",
+                                         "{count} favorites loaded.",
+                                         len(favorites),
+                                     ),
                                      text_color=("#2e7d32", "#81c784"))
             except Exception as exc:
-                status_lbl.configure(text=f"❌  {exc}", text_color=("red", "#ff6b6b"))
+                LOGGER.error("Favorite loading failed (%s)", type(exc).__name__)
+                status_lbl.configure(
+                    text="❌  " + self._("The favorites could not be loaded."),
+                    text_color=("red", "#ff6b6b"),
+                )
                 return
 
             # Rebuild scroll area
@@ -682,7 +757,7 @@ class JobFinderApp(ctk.CTk):
 
             if not favorites:
                 ctk.CTkLabel(scroll,
-                             text="No favorites yet.\nStar a job on the home screen to save it here.",
+                             text=self._("No favorites yet.\nStar a job on the home screen to save it here."),
                              font=("Segoe UI", 14),
                              text_color=("gray45", "gray65")
                              ).grid(row=0, column=0, pady=40)
@@ -700,7 +775,7 @@ class JobFinderApp(ctk.CTk):
                 self._create_job_card(scroll, idx, job, in_favorites=True)
 
         ctk.CTkButton(
-            form_frame, text="Connect & Load", height=36,
+            form_frame, text=self._("Connect & Load"), height=36,
             corner_radius=8, font=("Segoe UI", 12, "bold"),
             command=_connect_and_load
         ).grid(row=len(fields) + 2, column=0, columnspan=2,
@@ -716,7 +791,7 @@ class JobFinderApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.main_cointeiner,
-            text="📚  Curriculums",
+            text=f"📚  {self._('Curriculums')}",
             font=("Segoe UI", 26, "bold"),
             anchor="w"
         ).grid(row=0, column=0, sticky="w", padx=24, pady=(18, 0))
@@ -737,14 +812,14 @@ class JobFinderApp(ctk.CTk):
 
         ctk.CTkLabel(
             upload_panel,
-            text="Submit your curriculum below",
+            text=self._("Submit your curriculum below"),
             font=("Segoe UI", 15, "bold"),
             wraplength=200
         ).pack(padx=16, pady=(20, 6))
 
         ctk.CTkLabel(
             upload_panel,
-            text="We only allow PDF or Word files (.docx)",
+            text=self._("We only allow PDF or Word files (.docx)"),
             font=("Segoe UI", 11),
             text_color=("gray45", "gray65"),
             wraplength=200
@@ -759,28 +834,30 @@ class JobFinderApp(ctk.CTk):
 
         def _do_upload():
             fp = filedialog.askopenfilename(
-                title="Select your curriculum",
-                filetypes=[("Allowed files", "*.pdf *.docx"),
+                title=self._("Select your curriculum"),
+                filetypes=[(self._("Allowed files"), "*.pdf *.docx"),
                            ("PDF", "*.pdf"), ("Word", "*.docx")]
             )
             if not fp:
                 return
             if os.path.splitext(fp)[1].lower() not in (".pdf", ".docx"):
                 upload_status.configure(
-                    text="❌  Invalid file type.", text_color=("red", "#ff6b6b"))
+                    text="❌  " + self._("Invalid file type."), text_color=("red", "#ff6b6b"))
                 return
             try:
                 pg_upload_curriculum(fp)
                 upload_status.configure(
-                    text=f"✅  '{os.path.basename(fp)}' uploaded.",
+                    text="✅  " + self._("'{filename}' uploaded.", filename=os.path.basename(fp)),
                     text_color=("#2e7d32", "#81c784"))
                 _refresh_ref["fn"]()
             except Exception as exc:
+                LOGGER.error("Curriculum upload failed (%s)", type(exc).__name__)
                 upload_status.configure(
-                    text=f"❌  {exc}", text_color=("red", "#ff6b6b"))
+                    text="❌  " + self._("The curriculum could not be uploaded."),
+                    text_color=("red", "#ff6b6b"))
 
         ctk.CTkButton(
-            upload_panel, text="📂  Upload File",
+            upload_panel, text=f"📂  {self._('Upload File')}",
             width=180, height=44, corner_radius=12,
             font=("Segoe UI", 14, "bold"),
             command=_do_upload
@@ -793,7 +870,7 @@ class JobFinderApp(ctk.CTk):
         list_outer.grid_columnconfigure(0, weight=1)
         list_outer.grid_rowconfigure(1, weight=1)
 
-        ctk.CTkLabel(list_outer, text="Stored Curriculums",
+        ctk.CTkLabel(list_outer, text=self._("Stored Curriculums"),
                      font=("Segoe UI", 14, "bold"), anchor="w"
                      ).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
 
@@ -813,8 +890,9 @@ class JobFinderApp(ctk.CTk):
             try:
                 rows = pg_load_curriculums()
             except Exception as exc:
+                LOGGER.error("Curriculum loading failed (%s)", type(exc).__name__)
                 ctk.CTkLabel(list_scroll,
-                             text=f"⚠️  DB error:\n{exc}",
+                             text="⚠️  " + self._("The curriculums could not be loaded."),
                              font=("Segoe UI", 12),
                              text_color=("red", "#ff6b6b"),
                              wraplength=300
@@ -823,7 +901,7 @@ class JobFinderApp(ctk.CTk):
 
             if not rows:
                 ctk.CTkLabel(list_scroll,
-                             text="No curriculums uploaded yet.",
+                             text=self._("No curriculums uploaded yet."),
                              font=("Segoe UI", 13),
                              text_color=("gray45", "gray65")
                              ).grid(row=0, column=0, pady=20)
@@ -847,7 +925,7 @@ class JobFinderApp(ctk.CTk):
             ctk.CTkLabel(card, text=fname,
                          font=("Segoe UI", 13, "bold"), anchor="w"
                          ).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 2))
-            ctk.CTkLabel(card, text=f"Uploaded: {uploaded}",
+            ctk.CTkLabel(card, text=self._("Uploaded: {date}", date=uploaded),
                          font=("Segoe UI", 10),
                          text_color=("gray45", "gray65"), anchor="w"
                          ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 8))
@@ -860,15 +938,16 @@ class JobFinderApp(ctk.CTk):
                 dest = filedialog.asksaveasfilename(
                     defaultextension=os.path.splitext(_fname)[1],
                     initialfile=_fname,
-                    filetypes=[("All files", "*.*")]
+                    filetypes=[(self._("All files"), "*.*")]
                 )
                 if not dest:
                     return
                 try:
                     pg_download_curriculum(_rid, dest)
-                    messagebox.showinfo("Download", f"Saved to:\n{dest}")
+                    messagebox.showinfo(self._("Download"), self._("Saved to:\n{path}", path=dest))
                 except Exception as exc:
-                    messagebox.showerror("Error", str(exc))
+                    LOGGER.error("Curriculum download failed (%s)", type(exc).__name__)
+                    messagebox.showerror(self._("Error"), self._("The curriculum could not be downloaded."))
 
             ctk.CTkButton(
                 btn_row, text="⬇", width=34, height=34,
@@ -881,21 +960,22 @@ class JobFinderApp(ctk.CTk):
             # ── Update (replace file) ─────────────────────────────────────
             def _update(_rid=rid):
                 fp = filedialog.askopenfilename(
-                    title="Select replacement file",
-                    filetypes=[("Allowed files", "*.pdf *.docx"),
+                    title=self._("Select replacement file"),
+                    filetypes=[(self._("Allowed files"), "*.pdf *.docx"),
                                ("PDF", "*.pdf"), ("Word", "*.docx")]
                 )
                 if not fp:
                     return
                 if os.path.splitext(fp)[1].lower() not in (".pdf", ".docx"):
-                    messagebox.showerror("Invalid file", "Only PDF or .docx allowed.")
+                    messagebox.showerror(self._("Invalid file"), self._("Only PDF or .docx allowed."))
                     return
                 try:
                     pg_update_curriculum(_rid, fp)
-                    messagebox.showinfo("Updated", "Curriculum updated successfully.")
+                    messagebox.showinfo(self._("Updated"), self._("Curriculum updated successfully."))
                     _refresh_list()
                 except Exception as exc:
-                    messagebox.showerror("Error", str(exc))
+                    LOGGER.error("Curriculum update failed (%s)", type(exc).__name__)
+                    messagebox.showerror(self._("Error"), self._("The curriculum could not be updated."))
 
             ctk.CTkButton(
                 btn_row, text="✏", width=34, height=34,
@@ -908,13 +988,14 @@ class JobFinderApp(ctk.CTk):
             # ── Delete ────────────────────────────────────────────────────
             def _delete(_rid=rid, _fname=fname):
                 if not messagebox.askyesno(
-                        "Delete", f"Permanently delete '{_fname}'?"):
+                        self._("Delete"), self._("Permanently delete '{filename}'?", filename=_fname)):
                     return
                 try:
                     pg_delete_curriculum(_rid)
                     _refresh_list()
                 except Exception as exc:
-                    messagebox.showerror("Error", str(exc))
+                    LOGGER.error("Curriculum deletion failed (%s)", type(exc).__name__)
+                    messagebox.showerror(self._("Error"), self._("The curriculum could not be deleted."))
 
             ctk.CTkButton(
                 btn_row, text="🗑", width=34, height=34,
@@ -936,13 +1017,20 @@ class JobFinderApp(ctk.CTk):
     def MainConteiner(self):
         def get_greeting() -> str:
             h = datetime.datetime.now().hour
-            return "Good Morning" if h < 13 else "Good Afternoon" if h < 18 else "Good Night"
+            if h < 13:
+                return self._("Good Morning")
+            if h < 18:
+                return self._("Good Afternoon")
+            return self._("Good Night")
  
         def toggle_theme():
             mode = ctk.get_appearance_mode()
             new  = "Light" if mode == "Dark" else "Dark"
             ctk.set_appearance_mode(new)
-            theme_btn.configure(text="☀️  Light Mode" if new == "Light" else "🌙  Dark Mode")
+            theme_btn.configure(
+                text=f"☀️  {self._('Light Mode')}" if new == "Light"
+                else f"🌙  {self._('Dark Mode')}"
+            )
  
         # Reset stale row weights left by other views
         for _i in range(5):
@@ -957,13 +1045,13 @@ class JobFinderApp(ctk.CTk):
  
         ctk.CTkLabel(
             top_bar,
-            text=f"Hey, {get_greeting()} 👋",
+            text=self._("Hey, {greeting} 👋", greeting=get_greeting()),
             font=("Segoe UI", 26, "bold"),
             anchor="w",
         ).grid(row=0, column=0, sticky="w")
  
         theme_btn = ctk.CTkButton(
-            top_bar, text="🌙  Dark Mode",
+            top_bar, text=f"🌙  {self._('Dark Mode')}",
             width=130, height=34, corner_radius=17,
             font=("Segoe UI", 13), command=toggle_theme,
         )
@@ -971,7 +1059,7 @@ class JobFinderApp(ctk.CTk):
 
         browser_btn = ctk.CTkButton(
             top_bar,
-            text="Open browser view",
+            text=self._("Open browser view"),
             width=150,
             height=34,
             corner_radius=17,
@@ -984,7 +1072,7 @@ class JobFinderApp(ctk.CTk):
         # ── Subtitle ──────────────────────────────────────────────────────
         ctk.CTkLabel(
             self.main_cointeiner,
-            text="Look what we've found:",
+            text=self._("Look what we've found:"),
             font=("Segoe UI", 15),
             text_color=("gray45", "gray65"),
             anchor="w",
@@ -1009,7 +1097,7 @@ class JobFinderApp(ctk.CTk):
             if not sample_jobs:
                 ctk.CTkLabel(
                     scroll_frame,
-                    text="No job openings found.\nClick «Search for new jobs» to fetch the latest listings.",
+                    text=self._("No job openings found.\nClick «Search for new jobs» to fetch the latest listings."),
                     font=("Segoe UI", 14),
                     text_color=("gray45", "gray65"),
                     justify="center",
@@ -1024,7 +1112,7 @@ class JobFinderApp(ctk.CTk):
                 widget.destroy()
             ctk.CTkLabel(
                 scroll_frame,
-                text="Loading saved job openings...",
+                text=self._("Loading saved job openings..."),
                 font=("Segoe UI", 14),
                 text_color=("gray45", "gray65"),
             ).grid(row=0, column=0, pady=60)
@@ -1104,12 +1192,12 @@ class JobFinderApp(ctk.CTk):
  
         # ── Search: call BrowsingForJobs → refresh from DB ────────────────
         def search_for_new_jobs():
-            search_btn.configure(state="disabled", text="⏳  Searching…")
+            search_btn.configure(state="disabled", text=f"⏳  {self._('Searching…')}")
             for widget in scroll_frame.winfo_children():
                 widget.destroy()
             ctk.CTkLabel(
                 scroll_frame,
-                text="⏳  Searching for new job openings, please wait…",
+                text=f"⏳  {self._('Searching for new job openings, please wait…')}",
                 font=("Segoe UI", 14),
                 text_color=("gray45", "gray65"),
             ).grid(row=0, column=0, pady=60)
@@ -1123,15 +1211,15 @@ class JobFinderApp(ctk.CTk):
                     return
                 if scrape_future.exception() is not None:
                     messagebox.showerror(
-                        "Job search error",
-                        "The job search could not be completed. See logs/app.log.",
+                        self._("Job search error"),
+                        self._("The job search could not be completed. See logs/app.log."),
                     )
 
                 def enable_search():
                     if search_btn.winfo_exists():
                         search_btn.configure(
                             state="normal",
-                            text="🔍  Search for new jobs",
+                            text=f"🔍  {self._('Search for new jobs')}",
                         )
 
                 fetch_for_jobs(on_complete=enable_search)
@@ -1141,7 +1229,7 @@ class JobFinderApp(ctk.CTk):
         # ── Search button (row 2) ─────────────────────────────────────────
         search_btn = ctk.CTkButton(
             self.main_cointeiner,
-            text="🔍  Search for new jobs",
+            text=f"🔍  {self._('Search for new jobs')}",
             height=36, corner_radius=18,
             font=("Segoe UI", 13, "bold"),
             command=search_for_new_jobs,
@@ -1154,7 +1242,7 @@ class JobFinderApp(ctk.CTk):
 
         ctk.CTkButton(
             self.main_cointeiner,
-            text="🗑  Clean jobs",
+            text=f"🗑  {self._('Clean jobs')}",
             height=36, corner_radius=18,
             font=("Segoe UI", 13, "bold"),
             fg_color="transparent",
@@ -1273,13 +1361,13 @@ class JobFinderApp(ctk.CTk):
                     padx=16, pady=(0, 14))
         footer.grid_columnconfigure((0, 1, 2), weight=1)
  
-        ctk.CTkLabel(footer, text=f"💰 Salary:\n{salary}",
+        ctk.CTkLabel(footer, text="💰 " + self._("Salary:\n{salary}", salary=salary),
                      font=("Segoe UI", 11), justify="left", anchor="w",
                      ).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(footer, text=f"📍 Location:\n{location}",
+        ctk.CTkLabel(footer, text="📍 " + self._("Location:\n{location}", location=location),
                      font=("Segoe UI", 11), justify="left", anchor="w",
                      ).grid(row=0, column=1, sticky="w")
-        ctk.CTkLabel(footer, text=f"⏰ Deadline:\n{deadline}",
+        ctk.CTkLabel(footer, text="⏰ " + self._("Deadline:\n{deadline}", deadline=deadline),
                      font=("Segoe UI", 11), justify="left", anchor="w",
                      ).grid(row=0, column=2, sticky="w")
  
@@ -1298,7 +1386,7 @@ class JobFinderApp(ctk.CTk):
         else:
             ctk.CTkLabel(
                 desc_frame,
-                text="No description available.",
+                text=self._("No description available."),
                 font=("Segoe UI", 11),
                 text_color=("gray50", "gray60"),
                 anchor="w",
@@ -1314,7 +1402,7 @@ class JobFinderApp(ctk.CTk):
  
         ctk.CTkButton(
             action_row,
-            text=f"🔗  {link_url if link_url else 'No link provided'}",
+            text=f"🔗  {link_url if link_url else self._('No link provided')}",
             anchor="w", font=("Segoe UI", 11),
             fg_color="transparent",
             text_color=("cornflowerblue", "deepskyblue"),
@@ -1381,7 +1469,10 @@ class JobFinderApp(ctk.CTk):
                 try:
                     if not success:
                         rating_state["value"] = previous
-                        messagebox.showerror("Rating error", "The rating could not be saved locally.")
+                        messagebox.showerror(
+                            self._("Rating error"),
+                            self._("The rating could not be saved locally."),
+                        )
                     rating_state["pending"] = False
                     _render_rating()
                 except tk.TclError:
@@ -1459,7 +1550,11 @@ class JobFinderApp(ctk.CTk):
                     if in_favorites:
                         _card.destroy()
             except Exception as exc:
-                messagebox.showerror("Database error", f"Could not update favorites:\n{exc}")
+                LOGGER.error("Favorite update failed (%s)", type(exc).__name__)
+                messagebox.showerror(
+                    self._("Database error"),
+                    self._("Could not update favorites."),
+                )
                 _st["active"] = not _st["active"]
                 _btn.configure(
                     text="★" if _st["active"] else "☆",
@@ -1475,9 +1570,10 @@ class JobFinderApp(ctk.CTk):
 
 def main() -> int:
     configure_logging(Path(resource_path("logs", "app.log")))
+    translations = create_translation_service()
     root: JobFinderApp | None = None
     try:
-        root = JobFinderApp()
+        root = JobFinderApp(translations)
         root.update_idletasks()
         root.deiconify()
         root.lift()
@@ -1485,15 +1581,14 @@ def main() -> int:
         return 0
     except Exception as error:
         LOGGER.error("Application startup failed safely (%s)", type(error).__name__)
-        print(
-            f"JobFinder could not open the desktop window ({type(error).__name__}). "
-            "See logs/app.log.",
-            file=sys.stderr,
-        )
+        print(translations.gettext(
+            "JobFinder could not open the desktop window ({error_type}). See logs/app.log.",
+            error_type=type(error).__name__,
+        ), file=sys.stderr)
         try:
             messagebox.showerror(
-                "JobFinder startup error",
-                "The desktop window could not be opened. See logs/app.log.",
+                translations.gettext("JobFinder startup error"),
+                translations.gettext("The desktop window could not be opened. See logs/app.log."),
                 parent=root,
             )
         except Exception:

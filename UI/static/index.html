@@ -3,17 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>JobFinder results</title>
+    <title data-i18n="JobFinder results">JobFinder results</title>
     <link rel="stylesheet" href="/static/styles.css">
     <script src="/static/app.js" defer></script>
   </head>
   <body>
     <header class="page-header">
       <div>
-        <p class="eyebrow">Local results</p>
+        <p class="eyebrow" data-i18n="Local results">Local results</p>
         <h1>JobFinder</h1>
       </div>
-      <button id="refresh-jobs" class="secondary-button" type="button">Refresh jobs</button>
+      <div class="header-actions">
+        <label for="language-select" data-i18n="Language">Language</label>
+        <select id="language-select" class="language-select" aria-label="Language" data-i18n-aria-label="Language"></select>
+        <button id="refresh-jobs" class="secondary-button" type="button" data-i18n="Refresh jobs">Refresh jobs</button>
+      </div>
     </header>
 
     <p id="status" class="status" role="status" aria-live="polite">Loading jobs…</p>
@@ -27,21 +31,21 @@
             <h2 class="title"></h2>
             <p class="location"></p>
           </div>
-          <p class="match-score" aria-label="Resume match"></p>
+          <p class="match-score" aria-label="Resume match" data-i18n-aria-label="Resume match"></p>
         </div>
 
         <div class="card-actions">
-          <a class="job-link" target="_blank" rel="noopener noreferrer">Open posting</a>
-          <div class="feedback-actions" role="group" aria-label="Rate this job">
+          <a class="job-link" target="_blank" rel="noopener noreferrer" data-i18n="Open posting">Open posting</a>
+          <div class="feedback-actions" role="group" aria-label="Rate this job" data-i18n-aria-label="Rate this job">
             <button class="rating-button great-button" type="button" aria-pressed="false">
-              <span aria-hidden="true">👍</span><span class="visually-hidden">Like this job</span>
+              <span aria-hidden="true">👍</span><span class="visually-hidden" data-i18n="Like this job">Like this job</span>
             </button>
             <button class="rating-button bad-button" type="button" aria-pressed="false">
-              <span aria-hidden="true">👎</span><span class="visually-hidden">Dislike this job</span>
+              <span aria-hidden="true">👎</span><span class="visually-hidden" data-i18n="Dislike this job">Dislike this job</span>
             </button>
           </div>
           <button class="description-button" type="button" aria-expanded="false">
-            <span>Full description</span><span class="arrow" aria-hidden="true">⌄</span>
+            <span data-i18n="Full description">Full description</span><span class="arrow" aria-hidden="true">⌄</span>
           </button>
         </div>
 

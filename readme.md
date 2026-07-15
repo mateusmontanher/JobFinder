@@ -12,6 +12,7 @@ Everything runs locally as a Python desktop app backed by a PostgreSQL database.
 |---|---|
 | Language | Python 3.13 |
 | GUI | [CustomTkinter](https://customtkinter.tomschimansky.com/) (modern themed Tkinter) + Pillow |
+| Interface localization | GNU gettext catalogs managed with Babel (English + pt-BR) |
 | Web scraping | [Playwright](https://playwright.dev/python/) (sync API, headless Chrome) |
 | NLP / ML | spaCy (`pt_core_news_md`), NLTK (stopwords, tokenization), python-docx |
 | Translation | deep-translator (Google Translate, pt ↔ en) |
@@ -112,6 +113,23 @@ Run the app:
 ```bash
 python UI/main.py
 ```
+
+The interface detects the operating-system language on startup. Use the language menu
+in the sidebar to switch the desktop UI between English and Portuguese without
+restarting. The browser view has the same selector in its header and updates in place.
+Unsupported locales fall back to English, while Portuguese variants such as `pt_PT`
+resolve to the bundled `pt_BR` catalog.
+
+To update translatable strings and compile catalogs after editing a `.po` file:
+
+```bash
+pybabel extract -F babel.cfg -o locales/jobfinder.pot .
+pybabel compile -d locales -D jobfinder
+```
+
+Adding another language requires only a standard
+`locales/<locale>/LC_MESSAGES/jobfinder.po` catalog. The source runtime can load the
+`.po` directly; compiling it to `.mo` keeps packaged startup fastest.
 
 Run the offline suite and coverage gate with:
 

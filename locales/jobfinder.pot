@@ -1,0 +1,463 @@
+# Translations template for JobFinder.
+# Copyright (C) 2026 JobFinder
+# This file is distributed under the same license as the JobFinder project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: JobFinder 1.0\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-07-15 02:36-0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.17.0\n"
+
+#: main.py:20
+msgid "Rank JSONL jobs against a JSON resume locally."
+msgstr ""
+
+#: main.py:21
+msgid "JSON file containing a 'resume' string"
+msgstr ""
+
+#: main.py:22
+msgid "JSONL input file of jobs"
+msgstr ""
+
+#: main.py:23
+msgid "Filtered JSONL output file"
+msgstr ""
+
+#: ML/cli.py:25
+msgid "Match a local resume against local job records"
+msgstr ""
+
+#: ML/cli.py:26
+msgid "JSON, CSV, TXT, or DOCX resume"
+msgstr ""
+
+#: ML/cli.py:27
+msgid "Job file or local folder"
+msgstr ""
+
+#: ML/cli.py:28
+msgid "JSON or CSV report"
+msgstr ""
+
+#: ML/cli.py:29
+msgid "Minimum score percentage"
+msgstr ""
+
+#: UI/api.py:45 UI/static/index.html:6
+msgid "JobFinder results"
+msgstr ""
+
+#: UI/api.py:46 UI/main.py:548 UI/static/index.html:17 UI/static/index.html:18
+msgid "Language"
+msgstr ""
+
+#: UI/api.py:47 UI/static/index.html:13
+msgid "Local results"
+msgstr ""
+
+#: UI/api.py:48 UI/static/index.html:19
+msgid "Refresh jobs"
+msgstr ""
+
+#: UI/api.py:49
+msgid "Loading jobs…"
+msgstr ""
+
+#: UI/api.py:50 UI/static/index.html:34
+msgid "Resume match"
+msgstr ""
+
+#: UI/api.py:51 UI/static/index.html:38
+msgid "Open posting"
+msgstr ""
+
+#: UI/api.py:52 UI/static/index.html:39
+msgid "Rate this job"
+msgstr ""
+
+#: UI/api.py:53 UI/static/index.html:41
+msgid "Like this job"
+msgstr ""
+
+#: UI/api.py:54 UI/static/index.html:44
+msgid "Dislike this job"
+msgstr ""
+
+#: UI/api.py:55 UI/static/index.html:48
+msgid "Full description"
+msgstr ""
+
+#: UI/api.py:56
+msgid "Rating saved locally."
+msgstr ""
+
+#: UI/api.py:57
+msgid "Rating removed."
+msgstr ""
+
+#: UI/api.py:58
+msgid "The rating could not be saved. Please try again."
+msgstr ""
+
+#: UI/api.py:59 UI/main.py:440
+msgid "The action could not be completed. See logs/app.log."
+msgstr ""
+
+#: UI/api.py:60
+msgid "Company not provided"
+msgstr ""
+
+#: UI/api.py:61
+msgid "Untitled opening"
+msgstr ""
+
+#: UI/api.py:62
+msgid "Location not provided"
+msgstr ""
+
+#: UI/api.py:63
+#, python-brace-format
+msgid "{percent}% match"
+msgstr ""
+
+#: UI/api.py:64 UI/main.py:1389
+msgid "No description available."
+msgstr ""
+
+#: UI/api.py:65
+msgid "No jobs are currently available."
+msgstr ""
+
+#: UI/api.py:66
+msgid ""
+"Jobs could not be loaded. Check the local database connection and try "
+"again."
+msgstr ""
+
+#: UI/api.py:353 UI/api.py:359
+#, python-brace-format
+msgid "{count} job loaded."
+msgid_plural "{count} jobs loaded."
+msgstr[0] ""
+msgstr[1] ""
+
+#: UI/main.py:439
+msgid "Application error"
+msgstr ""
+
+#: UI/main.py:446
+msgid "Browser view unavailable"
+msgstr ""
+
+#: UI/main.py:447
+msgid "The local browser service could not be started."
+msgstr ""
+
+#: UI/main.py:529 UI/main.py:696
+msgid "User"
+msgstr ""
+
+#: UI/main.py:566
+msgid "Home"
+msgstr ""
+
+#: UI/main.py:572 UI/main.py:677
+msgid "Favorites"
+msgstr ""
+
+#: UI/main.py:578 UI/main.py:794
+msgid "Curriculums"
+msgstr ""
+
+#: UI/main.py:589
+#, python-brace-format
+msgid "Developed by {name}"
+msgstr ""
+
+#: UI/main.py:688
+msgid "Database connection"
+msgstr ""
+
+#: UI/main.py:693
+msgid "Host"
+msgstr ""
+
+#: UI/main.py:694
+msgid "Port"
+msgstr ""
+
+#: UI/main.py:695
+msgid "DB Name"
+msgstr ""
+
+#: UI/main.py:697
+msgid "Password"
+msgstr ""
+
+#: UI/main.py:725
+msgid "Connecting…"
+msgstr ""
+
+#: UI/main.py:731
+#, python-brace-format
+msgid "{count} favorite loaded."
+msgid_plural "{count} favorites loaded."
+msgstr[0] ""
+msgstr[1] ""
+
+#: UI/main.py:739
+msgid "The favorites could not be loaded."
+msgstr ""
+
+#: UI/main.py:760
+msgid ""
+"No favorites yet.\n"
+"Star a job on the home screen to save it here."
+msgstr ""
+
+#: UI/main.py:778
+msgid "Connect & Load"
+msgstr ""
+
+#: UI/main.py:815
+msgid "Submit your curriculum below"
+msgstr ""
+
+#: UI/main.py:822
+msgid "We only allow PDF or Word files (.docx)"
+msgstr ""
+
+#: UI/main.py:837
+msgid "Select your curriculum"
+msgstr ""
+
+#: UI/main.py:838 UI/main.py:964
+msgid "Allowed files"
+msgstr ""
+
+#: UI/main.py:845
+msgid "Invalid file type."
+msgstr ""
+
+#: UI/main.py:850
+#, python-brace-format
+msgid "'{filename}' uploaded."
+msgstr ""
+
+#: UI/main.py:856
+msgid "The curriculum could not be uploaded."
+msgstr ""
+
+#: UI/main.py:860
+msgid "Upload File"
+msgstr ""
+
+#: UI/main.py:873
+msgid "Stored Curriculums"
+msgstr ""
+
+#: UI/main.py:895
+msgid "The curriculums could not be loaded."
+msgstr ""
+
+#: UI/main.py:904
+msgid "No curriculums uploaded yet."
+msgstr ""
+
+#: UI/main.py:928
+#, python-brace-format
+msgid "Uploaded: {date}"
+msgstr ""
+
+#: UI/main.py:941
+msgid "All files"
+msgstr ""
+
+#: UI/main.py:947
+msgid "Download"
+msgstr ""
+
+#: UI/main.py:947
+#, python-brace-format
+msgid ""
+"Saved to:\n"
+"{path}"
+msgstr ""
+
+#: UI/main.py:950 UI/main.py:978 UI/main.py:998
+msgid "Error"
+msgstr ""
+
+#: UI/main.py:950
+msgid "The curriculum could not be downloaded."
+msgstr ""
+
+#: UI/main.py:963
+msgid "Select replacement file"
+msgstr ""
+
+#: UI/main.py:970
+msgid "Invalid file"
+msgstr ""
+
+#: UI/main.py:970
+msgid "Only PDF or .docx allowed."
+msgstr ""
+
+#: UI/main.py:974
+msgid "Updated"
+msgstr ""
+
+#: UI/main.py:974
+msgid "Curriculum updated successfully."
+msgstr ""
+
+#: UI/main.py:978
+msgid "The curriculum could not be updated."
+msgstr ""
+
+#: UI/main.py:991
+msgid "Delete"
+msgstr ""
+
+#: UI/main.py:991
+#, python-brace-format
+msgid "Permanently delete '{filename}'?"
+msgstr ""
+
+#: UI/main.py:998
+msgid "The curriculum could not be deleted."
+msgstr ""
+
+#: UI/main.py:1021
+msgid "Good Morning"
+msgstr ""
+
+#: UI/main.py:1023
+msgid "Good Afternoon"
+msgstr ""
+
+#: UI/main.py:1024
+msgid "Good Night"
+msgstr ""
+
+#: UI/main.py:1031
+msgid "Light Mode"
+msgstr ""
+
+#: UI/main.py:1032 UI/main.py:1054
+msgid "Dark Mode"
+msgstr ""
+
+#: UI/main.py:1048
+#, python-brace-format
+msgid "Hey, {greeting} 👋"
+msgstr ""
+
+#: UI/main.py:1062
+msgid "Open browser view"
+msgstr ""
+
+#: UI/main.py:1075
+msgid "Look what we've found:"
+msgstr ""
+
+#: UI/main.py:1100
+msgid ""
+"No job openings found.\n"
+"Click «Search for new jobs» to fetch the latest listings."
+msgstr ""
+
+#: UI/main.py:1115
+msgid "Loading saved job openings..."
+msgstr ""
+
+#: UI/main.py:1195
+msgid "Searching…"
+msgstr ""
+
+#: UI/main.py:1200
+msgid "Searching for new job openings, please wait…"
+msgstr ""
+
+#: UI/main.py:1214
+msgid "Job search error"
+msgstr ""
+
+#: UI/main.py:1215
+msgid "The job search could not be completed. See logs/app.log."
+msgstr ""
+
+#: UI/main.py:1222 UI/main.py:1232
+msgid "Search for new jobs"
+msgstr ""
+
+#: UI/main.py:1245
+msgid "Clean jobs"
+msgstr ""
+
+#: UI/main.py:1364
+#, python-brace-format
+msgid ""
+"Salary:\n"
+"{salary}"
+msgstr ""
+
+#: UI/main.py:1367
+#, python-brace-format
+msgid ""
+"Location:\n"
+"{location}"
+msgstr ""
+
+#: UI/main.py:1370
+#, python-brace-format
+msgid ""
+"Deadline:\n"
+"{deadline}"
+msgstr ""
+
+#: UI/main.py:1405
+msgid "No link provided"
+msgstr ""
+
+#: UI/main.py:1473
+msgid "Rating error"
+msgstr ""
+
+#: UI/main.py:1474
+msgid "The rating could not be saved locally."
+msgstr ""
+
+#: UI/main.py:1555
+msgid "Database error"
+msgstr ""
+
+#: UI/main.py:1556
+msgid "Could not update favorites."
+msgstr ""
+
+#: UI/main.py:1585
+#, python-brace-format
+msgid ""
+"JobFinder could not open the desktop window ({error_type}). See "
+"logs/app.log."
+msgstr ""
+
+#: UI/main.py:1590
+msgid "JobFinder startup error"
+msgstr ""
+
+#: UI/main.py:1591
+msgid "The desktop window could not be opened. See logs/app.log."
+msgstr ""

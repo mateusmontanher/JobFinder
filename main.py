@@ -6,6 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
+from jobfinder.i18n import BabelPoCatalogRepository, TranslationService
 from jobfinder.logging_config import configure_logging
 from jobfinder.parsing import iter_jobs, read_resume, write_results
 from jobfinder.service import JobMatchingService
@@ -13,11 +14,13 @@ from jobfinder.service import JobMatchingService
 LOGGER = logging.getLogger(__name__)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Rank JSONL jobs against a JSON resume locally.")
-    parser.add_argument("--resume", required=True, type=Path, help="JSON file containing a 'resume' string")
-    parser.add_argument("--jobs", required=True, type=Path, help="JSONL input file of jobs")
-    parser.add_argument("--out", required=True, type=Path, help="Filtered JSONL output file")
+def build_parser(translations: TranslationService | None = None) -> argparse.ArgumentParser:
+    service = translations or TranslationService(BabelPoCatalogRepository(Path(__file__).parent / "locales"))
+    _ = service.gettext
+    parser = argparse.ArgumentParser(description=_("Rank JSONL jobs against a JSON resume locally."))
+    parser.add_argument("--resume", required=True, type=Path, help=_("JSON file containing a 'resume' string"))
+    parser.add_argument("--jobs", required=True, type=Path, help=_("JSONL input file of jobs"))
+    parser.add_argument("--out", required=True, type=Path, help=_("Filtered JSONL output file"))
     return parser
 
 

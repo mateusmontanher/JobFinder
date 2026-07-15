@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import secrets
+import sys
 import threading
 import time
 from collections import deque
@@ -20,17 +21,50 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 from jobfinder.feedback import RatedJob, RatingService, SQLiteRatingRepository
+from jobfinder.i18n import BabelPoCatalogRepository, TranslationService
 from webscrapping.domain import ScrapedJob
 from webscrapping.repositories import PostgresJobRepository
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _(message: str) -> str:
+    """Mark a browser message for Babel without translating the API protocol."""
+    return message
+
+
 RATING_ROUTE = re.compile(r"/api/jobs/(?P<identifier>[A-Za-z0-9:_-]{1,128})/rating\Z")
+I18N_ROUTE = re.compile(r"/api/i18n/(?P<locale>[A-Za-z]{2,3}(?:[_-][A-Za-z]{2})?)\Z")
 SESSION_COOKIE = "jobfinder_session"
 MAX_REQUEST_BODY = 1024
 STATIC_TYPES = {
     "/static/app.js": "application/javascript; charset=utf-8",
     "/static/styles.css": "text/css; charset=utf-8",
 }
+BROWSER_MESSAGES = (
+    _("JobFinder results"),
+    _("Language"),
+    _("Local results"),
+    _("Refresh jobs"),
+    _("Loading jobs…"),
+    _("Resume match"),
+    _("Open posting"),
+    _("Rate this job"),
+    _("Like this job"),
+    _("Dislike this job"),
+    _("Full description"),
+    _("Rating saved locally."),
+    _("Rating removed."),
+    _("The rating could not be saved. Please try again."),
+    _("The action could not be completed. See logs/app.log."),
+    _("Company not provided"),
+    _("Untitled opening"),
+    _("Location not provided"),
+    _("{percent}% match"),
+    _("No description available."),
+    _("No jobs are currently available."),
+    _("Jobs could not be loaded. Check the local database connection and try again."),
+)
 
 
 class JobReader(Protocol):
@@ -61,6 +95,7 @@ class SlidingWindowRateLimiter:
 class ApiContext:
     jobs: JobReader
     ratings: RatingService
+    translations: TranslationService
     static_directory: Path
     session_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     limiter: SlidingWindowRateLimiter = field(default_factory=SlidingWindowRateLimiter)
@@ -141,6 +176,8 @@ class SecureRequestHandler(BaseHTTPRequestHandler):
             self._serve_static(parsed.path)
         elif parsed.path == "/api/jobs" and self._authenticated():
             self._serve_jobs()
+        elif (match := I18N_ROUTE.fullmatch(parsed.path)) and self._authenticated():
+            self._serve_translations(match.group("locale"))
         elif parsed.path == "/api/health" and self._authenticated():
             self._json(HTTPStatus.OK, {"status": "ok"})
         else:
@@ -300,6 +337,35 @@ class SecureRequestHandler(BaseHTTPRequestHandler):
         ]
         self._json(HTTPStatus.OK, {"jobs": records})
 
+    def _serve_translations(self, requested_locale: str) -> None:
+        session = self.context.translations.fork(requested_locale)
+        payload = {
+            "locale": session.locale,
+            "html_language": session.html_language,
+            "languages": [
+                {"code": code, "name": name}
+                for code, name in session.available_languages()
+            ],
+            "messages": session.export(BROWSER_MESSAGES),
+            "plurals": {
+                "jobs_loaded": {
+                    "one": session.ngettext(
+                        "{count} job loaded.",
+                        "{count} jobs loaded.",
+                        1,
+                        count="{count}",
+                    ),
+                    "other": session.ngettext(
+                        "{count} job loaded.",
+                        "{count} jobs loaded.",
+                        2,
+                        count="{count}",
+                    ),
+                }
+            },
+        }
+        self._json(HTTPStatus.OK, payload)
+
     @staticmethod
     def _rated_job(job: ScrapedJob) -> RatedJob:
         return RatedJob(job.identifier, job.title, job.description, job.location)
@@ -398,13 +464,18 @@ class LocalApiServer:
         jobs: JobReader | None = None,
         ratings: RatingService | None = None,
         *,
+        translations: TranslationService | None = None,
         static_directory: str | Path | None = None,
         port: int = 0,
     ) -> None:
         root = Path(static_directory) if static_directory else Path(__file__).with_name("static")
+        application_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
         context = ApiContext(
             jobs=jobs or PostgresJobRepository(),
             ratings=ratings or RatingService(SQLiteRatingRepository()),
+            translations=translations or TranslationService(
+                BabelPoCatalogRepository(application_root / "locales")
+            ),
             static_directory=root,
         )
         self._server = SecureLocalHTTPServer(("127.0.0.1", port), context)

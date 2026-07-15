@@ -4,9 +4,54 @@ const list = document.querySelector("#job-list");
 const status = document.querySelector("#status");
 const template = document.querySelector("#job-card-template");
 const refreshButton = document.querySelector("#refresh-jobs");
+const languageSelect = document.querySelector("#language-select");
 
-function setStatus(message) {
-  status.textContent = message;
+let catalog = {locale: "en", html_language: "en", languages: [{code: "en", name: "English"}], messages: {}, plurals: {}};
+let currentJobs = [];
+let statusState = {message: "Loading jobs…", values: {}};
+
+function interpolate(message, values = {}) {
+  return message.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, key) => (
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
+  ));
+}
+
+function translate(message, values = {}) {
+  return interpolate(catalog.messages[message] || message, values);
+}
+
+function translatePlural(name, count) {
+  const forms = catalog.plurals[name] || {};
+  const category = new Intl.PluralRules(catalog.html_language || "en").select(count);
+  return interpolate(forms[category] || forms.other || "{count} jobs loaded.", {count});
+}
+
+function translateTree(root) {
+  root.querySelectorAll("[data-i18n]").forEach((element) => {
+    element.textContent = translate(element.dataset.i18n);
+  });
+  root.querySelectorAll("[data-i18n-aria-label]").forEach((element) => {
+    element.setAttribute("aria-label", translate(element.dataset.i18nAriaLabel));
+  });
+}
+
+function setStatus(message, values = {}) {
+  statusState = {message, values};
+  status.textContent = translate(message, values);
+}
+
+function setLoadedStatus() {
+  if (currentJobs.length) {
+    statusState = {plural: "jobs_loaded", count: currentJobs.length};
+    status.textContent = translatePlural("jobs_loaded", currentJobs.length);
+  } else {
+    setStatus("No jobs are currently available.");
+  }
+}
+
+function refreshStatusTranslation() {
+  if (statusState.plural) status.textContent = translatePlural(statusState.plural, statusState.count);
+  else status.textContent = translate(statusState.message, statusState.values);
 }
 
 function safePostingUrl(value) {
@@ -30,7 +75,6 @@ async function updateRating(card, job, requestedRating) {
   const buttons = card.querySelectorAll(".rating-button");
   buttons.forEach((button) => { button.disabled = true; });
   applyRating(card, next);
-
   try {
     const response = await fetch(`/api/jobs/${job.id}/rating`, {
       method: next ? "PUT" : "DELETE",
@@ -50,11 +94,12 @@ async function updateRating(card, job, requestedRating) {
 
 function createCard(job, index) {
   const card = template.content.firstElementChild.cloneNode(true);
-  card.querySelector(".company").textContent = job.company || "Company not provided";
-  card.querySelector(".title").textContent = job.title || "Untitled opening";
-  card.querySelector(".location").textContent = job.location || "Location not provided";
-  card.querySelector(".match-score").textContent = `${Number(job.similarity_percent) || 0}% match`;
-  card.querySelector(".description-content").textContent = job.description || "No description available.";
+  translateTree(card);
+  card.querySelector(".company").textContent = job.company || translate("Company not provided");
+  card.querySelector(".title").textContent = job.title || translate("Untitled opening");
+  card.querySelector(".location").textContent = job.location || translate("Location not provided");
+  card.querySelector(".match-score").textContent = translate("{percent}% match", {percent: Number(job.similarity_percent) || 0});
+  card.querySelector(".description-content").textContent = job.description || translate("No description available.");
   applyRating(card, job.rating);
 
   const link = card.querySelector(".job-link");
@@ -79,6 +124,33 @@ function createCard(job, index) {
   return card;
 }
 
+function renderJobs() {
+  list.replaceChildren(...currentJobs.map(createCard));
+}
+
+function populateLanguageSelect() {
+  languageSelect.replaceChildren(...catalog.languages.map((language) => {
+    const option = document.createElement("option");
+    option.value = language.code;
+    option.textContent = language.name;
+    return option;
+  }));
+  languageSelect.value = catalog.locale;
+}
+
+async function loadTranslations(requestedLocale) {
+  const safeLocale = /^[A-Za-z]{2,3}(?:[-_][A-Za-z]{2})?$/.test(requestedLocale) ? requestedLocale : "en";
+  const response = await fetch(`/api/i18n/${encodeURIComponent(safeLocale)}`, {credentials: "same-origin"});
+  if (!response.ok) throw new Error(`translation request failed (${response.status})`);
+  catalog = await response.json();
+  document.documentElement.lang = catalog.html_language;
+  document.title = translate("JobFinder results");
+  translateTree(document);
+  populateLanguageSelect();
+  renderJobs();
+  refreshStatusTranslation();
+}
+
 async function loadJobs() {
   list.setAttribute("aria-busy", "true");
   refreshButton.disabled = true;
@@ -87,10 +159,12 @@ async function loadJobs() {
     const response = await fetch("/api/jobs", {credentials: "same-origin"});
     if (!response.ok) throw new Error(`jobs request failed (${response.status})`);
     const payload = await response.json();
-    list.replaceChildren(...payload.jobs.map(createCard));
-    setStatus(payload.jobs.length ? `${payload.jobs.length} jobs loaded.` : "No jobs are currently available.");
+    currentJobs = payload.jobs;
+    renderJobs();
+    setLoadedStatus();
   } catch (_error) {
-    list.replaceChildren();
+    currentJobs = [];
+    renderJobs();
     setStatus("Jobs could not be loaded. Check the local database connection and try again.");
   } finally {
     list.setAttribute("aria-busy", "false");
@@ -98,5 +172,20 @@ async function loadJobs() {
   }
 }
 
+languageSelect.addEventListener("change", async () => {
+  try {
+    await loadTranslations(languageSelect.value);
+  } catch (_error) {
+    setStatus("The action could not be completed. See logs/app.log.");
+  }
+});
 refreshButton.addEventListener("click", loadJobs);
-loadJobs();
+
+(async () => {
+  try {
+    await loadTranslations(navigator.language || "en");
+  } catch (_error) {
+    populateLanguageSelect();
+  }
+  await loadJobs();
+})();

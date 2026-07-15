@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 import UI.main as desktop
+from jobfinder.i18n import BabelPoCatalogRepository, TranslationService
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +42,9 @@ def test_main_maps_the_window_before_entering_the_event_loop(monkeypatch):
     log_paths: list[Path] = []
 
     class FakeApp:
+        def __init__(self, _translations=None):
+            pass
+
         def update_idletasks(self):
             events.append("update_idletasks")
 
@@ -150,3 +154,70 @@ def test_ctk_button_keyboard_focus_uses_the_supported_canvas_boundary():
         {"border_width": 2, "border_color": ("#005FCC", "#7CB9FF")},
         {"border_width": 0},
     ]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="CustomTkinter desktop integration requires Windows")
+def test_native_ui_switches_to_portuguese_without_restart(monkeypatch):
+    class EmptySnapshot:
+        def status_map(self):
+            return {}
+
+    class FakeRatings:
+        def snapshot(self):
+            return EmptySnapshot()
+
+        def rate(self, *_args):
+            return None
+
+        def clear(self, *_args):
+            return None
+
+    class FakeApi:
+        url = "http://127.0.0.1:1/"
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            return self.url
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(desktop, "SQLiteRatingRepository", lambda: object())
+    monkeypatch.setattr(desktop, "RatingService", lambda _repository: FakeRatings())
+    monkeypatch.setattr(desktop, "LocalApiServer", FakeApi)
+    monkeypatch.setattr(desktop, "_pg_connect", lambda: (_ for _ in ()).throw(ConnectionError()))
+    translations = TranslationService(
+        BabelPoCatalogRepository(ROOT / "locales"),
+        requested_locale="en",
+    )
+    root = desktop.JobFinderApp(translations)
+    root.withdraw()
+
+    def visible_texts(widget):
+        texts = []
+        try:
+            text = widget.cget("text")
+            if text:
+                texts.append(text)
+        except (AttributeError, ValueError, desktop.tk.TclError):
+            pass
+        for child in widget.winfo_children():
+            texts.extend(visible_texts(child))
+        return texts
+
+    try:
+        root._show_favorites()
+        assert "Database connection" in visible_texts(root)
+        root._change_language("Português (Brasil)")
+        root.update()
+
+        texts = visible_texts(root)
+        assert translations.locale == "pt_BR"
+        assert root._active_view == "favorites"
+        assert "Conexão com o banco de dados" in texts
+        assert "🏠  Início" in texts
+        assert "★  Favoritos" in texts
+    finally:
+        root._on_close()

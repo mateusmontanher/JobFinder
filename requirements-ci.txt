@@ -1,4 +1,5 @@
 beautifulsoup4==4.15.0
+Babel==2.17.0
 click==8.4.1
 customtkinter==5.2.2
 lxml==6.1.1

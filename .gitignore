@@ -79,3 +79,6 @@ logs/
 !docs/
 !docs/**/*.md
 !main.spec
+
+# Local executable recipes and outputs may embed machine-specific configuration.
+main.spec

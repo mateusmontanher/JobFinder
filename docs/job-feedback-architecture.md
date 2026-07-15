@@ -293,9 +293,10 @@ and Edge, while Playwright can install its matching Firefox runtime.
 
 #### 3. Decision taken
 
-`JobFinder.bat` now starts `UI/main.py`. The additive Git exception makes `main.spec`
-committable, and its data list packages the static browser directory and existing native
-images. A pinned minimal `requirements-ci.txt` installs only modules imported by tests
+`JobFinder.bat` now starts `UI/main.py`. Packaging recipes and generated executables are
+kept local because a machine-specific build may embed configuration. A local recipe must
+package the static browser directory and existing native images. A pinned minimal
+`requirements-ci.txt` installs only modules imported by tests
 and startup smoke checks, including spaCy's CLI-level `click` import that is not declared
 by the selected wheel's dependency metadata.
 
