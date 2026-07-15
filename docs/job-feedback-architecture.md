@@ -315,3 +315,50 @@ rather than being used to dilute or inflate the feature percentage.
 The root README now reflects the dual PostgreSQL/SQLite model, feedback flow, hardened
 loopback boundary, Python 3.12 support, and verification command so setup guidance does
 not contradict this decision record.
+
+### Responsive desktop startup from the UI directory
+
+#### 1. Problem solved
+
+Running `cd UI` followed by `python main.py` could leave the process without a visible
+CustomTkinter window. Home-screen construction queried PostgreSQL twice and downloaded
+each company logo synchronously before Tk entered its event loop, so an unavailable
+database, offline network, or several slow logo responses prevented the first paint.
+
+#### 2. Background context
+
+`JobFinderApp.__init__` builds the home screen before `mainloop()` starts. The legacy
+home builder mixed widget creation with external I/O, and launching from inside `UI/`
+appended the repository root behind installed packages in `sys.path`. The top-level
+exception guard also returned a failure code without presenting a terminal or dialog
+message, which made environment-specific startup failures look like a silent exit.
+
+#### 3. Decision taken
+
+The repository root is now inserted first for the legacy `UI/main.py` entry path. The
+initial PostgreSQL read is submitted once to the existing bounded UI executor, polled
+from Tk's main thread, and limited by a five-second connection timeout. Cards render an
+immediate initials placeholder while a separate four-worker image pool fetches optional
+logos. Logo requests require HTTPS on a `licdn.com` host, reject redirects and non-image
+responses, use finite connect/read timeouts, and stop after two MiB.
+
+Before entering the event loop, the composition root explicitly finalizes geometry,
+deiconifies, and raises the window. Startup logging always targets the root-level
+`logs/app.log`; a contained startup exception now produces a generic terminal and dialog
+message without logging credentials or job data. Both worker pools are cancelled during
+normal shutdown. Because `CTkButton` rejects Tk's `takefocus` constructor option, card
+buttons receive a single canvas-level tab stop after construction and draw a contrasting
+border on focus. Regression tests cover repository-local package resolution from the
+`UI` working directory, window lifecycle order, PostgreSQL timeout configuration, the
+logo-request allowlist and size boundary, and the supported CustomTkinter focus hook.
+
+#### 4. Consequences
+
+The desktop frame becomes visible independently of PostgreSQL and internet latency, and
+offline use shows stable initials instead of freezing on missing logos. Job rows and
+approved logos populate asynchronously when available. Tk widget updates remain on the
+main thread, rating writes cannot queue behind logo downloads, and invalid or oversized
+logo URLs cause only the placeholder to remain. Keyboard users retain Enter/Space card
+actions without triggering a card-render callback exception. The five-second database
+timeout applies to each background connection attempt rather than blocking application
+startup.
