@@ -1,4 +1,5 @@
 import spacy
+import pytest
 
 from ML.extraction import SpacyProfileExtractor
 from ML.feedback import FeedbackSimilarityScorer
@@ -78,6 +79,21 @@ def test_empty_search_preserves_existing_database_jobs():
     assert service.run() == []
     assert collector.calls == 3
     assert repository.jobs is None
+
+
+def test_facade_reports_a_search_failure_instead_of_returning_saved_jobs(monkeypatch):
+    import webscrapping.main as facade
+
+    class BrokenService:
+        def run(self):
+            raise RuntimeError("browser unavailable")
+
+    monkeypatch.setattr(facade, "JobSearchService", BrokenService)
+
+    with pytest.raises(facade.JobSearchFailed) as error:
+        facade.BrowsingForJobs()
+
+    assert isinstance(error.value.__cause__, RuntimeError)
 
 
 class Cursor:
