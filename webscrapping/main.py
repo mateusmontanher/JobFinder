@@ -15,6 +15,10 @@ from .service import JobSearchService
 LOGGER = logging.getLogger(__name__)
 
 
+class JobSearchFailed(RuntimeError):
+    """Raised when a search cannot run, instead of presenting stale saved jobs as new."""
+
+
 def resource_path(*parts: str) -> str:
     base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     return os.path.join(base, *parts)
@@ -40,7 +44,7 @@ def BrowsingForJobs() -> list:
         return JobSearchService().run()
     except Exception as error:
         LOGGER.error("Job search failed safely (%s)", type(error).__name__)
-        return []
+        raise JobSearchFailed("The job search could not be completed") from error
 
 
 if __name__ == "__main__":

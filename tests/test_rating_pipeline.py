@@ -39,7 +39,11 @@ def test_100_job_collection_and_feedback_classification_meets_budget_and_omits_d
 
     started = time.perf_counter()
     collected = list(
-        LinkedInCollector(http_get=get, maximum_workers=16)._postings(
+        LinkedInCollector(
+            http_get=get,
+            maximum_workers=4,
+            minimum_request_interval_seconds=0,
+        )._postings(
             [str(index) for index in range(100)]
         )
     )

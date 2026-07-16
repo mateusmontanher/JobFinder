@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Iterator
+from pathlib import Path
+from threading import Lock
+from time import monotonic, sleep
 from urllib.parse import urljoin
 
 import requests
@@ -20,6 +24,18 @@ CARD_SELECTORS = (
     "[data-entity-urn*='jobPosting']",
     ".base-card[data-entity-urn]",
 )
+
+
+def bundled_chromium_executable(base_directory: str | Path | None = None) -> str | None:
+    """Return the Chromium executable included beside a frozen application, if any."""
+    if base_directory is None:
+        base_directory = getattr(sys, "_MEIPASS", None)
+    if not base_directory:
+        return None
+
+    browser_root = Path(base_directory) / "playwright-browsers"
+    candidates = sorted(browser_root.glob("chromium-*/chrome-win*/chrome.exe"))
+    return str(candidates[-1]) if candidates else None
 
 
 def normalize_title(title: str | None) -> str:
@@ -42,24 +58,48 @@ class LinkedInCollector:
         channel: str = "chrome",
         headless: bool = True,
         timeout_ms: int = 10_000,
-        maximum_workers: int = 16,
+        maximum_workers: int = 2,
         request_timeout_seconds: float = 5.0,
+        minimum_request_interval_seconds: float = 0.75,
+        rate_limit_cooldown_seconds: float = 30.0,
+        rate_limit_retries: int = 1,
         http_get=None,
+        clock=None,
+        sleeper=None,
     ) -> None:
-        if maximum_workers < 1 or maximum_workers > 32:
-            raise ValueError("maximum_workers must be between 1 and 32")
+        if maximum_workers < 1 or maximum_workers > 4:
+            raise ValueError("maximum_workers must be between 1 and 4")
         if not 0 < request_timeout_seconds <= 30:
             raise ValueError("request_timeout_seconds must be between 0 and 30")
+        if minimum_request_interval_seconds < 0:
+            raise ValueError("minimum_request_interval_seconds cannot be negative")
+        if rate_limit_cooldown_seconds <= 0:
+            raise ValueError("rate_limit_cooldown_seconds must be greater than zero")
+        if rate_limit_retries < 0:
+            raise ValueError("rate_limit_retries cannot be negative")
         self.channel = channel
         self.headless = headless
         self.timeout_ms = timeout_ms
         self.maximum_workers = maximum_workers
         self.request_timeout_seconds = request_timeout_seconds
+        self.minimum_request_interval_seconds = minimum_request_interval_seconds
+        self.rate_limit_cooldown_seconds = rate_limit_cooldown_seconds
+        self.rate_limit_retries = rate_limit_retries
         self._http_get = http_get or requests.get
+        self._clock = clock or monotonic
+        self._sleep = sleeper or sleep
+        self._request_lock = Lock()
+        self._next_request_at = 0.0
 
     def collect(self, url: str) -> list[ScrapedJob]:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel=self.channel, headless=self.headless)
+            bundled_browser = bundled_chromium_executable()
+            launch_options = {"headless": self.headless}
+            if bundled_browser:
+                launch_options["executable_path"] = bundled_browser
+            else:
+                launch_options["channel"] = self.channel
+            browser = playwright.chromium.launch(**launch_options)
             try:
                 page = browser.new_page()
                 page.set_default_timeout(self.timeout_ms)
@@ -147,15 +187,38 @@ class LinkedInCollector:
 
     def _posting(self, identifier: str) -> ScrapedJob | None:
         endpoint = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{identifier}"
-        response = self._http_get(
-            endpoint,
-            timeout=self.request_timeout_seconds,
-            headers={
-                "Accept": "text/html,application/xhtml+xml",
-                "User-Agent": "JobFinder/1.0 (local desktop application)",
-            },
-        )
-        response.raise_for_status()
+        for attempt in range(self.rate_limit_retries + 1):
+            self._wait_for_request_slot()
+            response = self._http_get(
+                endpoint,
+                timeout=self.request_timeout_seconds,
+                headers={
+                    "Accept": "text/html,application/xhtml+xml",
+                    "User-Agent": "JobFinder/1.0 (local desktop application)",
+                },
+            )
+            try:
+                response.raise_for_status()
+                break
+            except requests.HTTPError as error:
+                if self._status_code(error) != 429:
+                    raise
+
+                cooldown = self._rate_limit_cooldown(error)
+                self._defer_requests(cooldown)
+                if attempt == self.rate_limit_retries:
+                    LOGGER.warning(
+                        "LinkedIn rate limited posting %s; fallback retry was exhausted",
+                        identifier,
+                    )
+                    return None
+                LOGGER.warning(
+                    "LinkedIn rate limited posting %s; retrying after %.1f seconds (%d/%d)",
+                    identifier,
+                    cooldown,
+                    attempt + 1,
+                    self.rate_limit_retries,
+                )
         soup = BeautifulSoup(response.text, "lxml")
         title_element = soup.select_one(".top-card-layout__title")
         title = normalize_title(title_element.get_text(" ", strip=True) if title_element else "")
@@ -176,6 +239,33 @@ class LinkedInCollector:
         anchor = title_element.find_parent("a", href=True) if title_element is not None else None
         public_url = urljoin(endpoint, anchor.get("href")) if anchor is not None else endpoint
         return ScrapedJob(identifier, title, company, location, description, public_url, logo)
+
+    def _wait_for_request_slot(self) -> None:
+        while True:
+            with self._request_lock:
+                now = self._clock()
+                wait_seconds = self._next_request_at - now
+                if wait_seconds <= 0:
+                    self._next_request_at = now + self.minimum_request_interval_seconds
+                    return
+            self._sleep(wait_seconds)
+
+    def _defer_requests(self, cooldown: float) -> None:
+        with self._request_lock:
+            self._next_request_at = max(self._next_request_at, self._clock() + cooldown)
+
+    def _rate_limit_cooldown(self, error: requests.HTTPError) -> float:
+        response = getattr(error, "response", None)
+        retry_after = response.headers.get("Retry-After") if response is not None else None
+        try:
+            return max(self.rate_limit_cooldown_seconds, float(retry_after))
+        except (TypeError, ValueError):
+            return self.rate_limit_cooldown_seconds
+
+    @staticmethod
+    def _status_code(error: requests.HTTPError) -> int | None:
+        response = getattr(error, "response", None)
+        return getattr(response, "status_code", None)
 
     @staticmethod
     def _soup_text(soup: BeautifulSoup, selector: str) -> str:

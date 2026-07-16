@@ -206,6 +206,36 @@ failures are logged by identifier and skipped. Live elapsed time still depends o
 LinkedIn latency and throttling, so CI measures the collector with a local fixture and
 keeps live LinkedIn verification as a separate smoke test.
 
+### LinkedIn rate-limit recovery
+
+#### 1. Problem solved
+
+Fetching guest-posting details in a large concurrent burst could trigger LinkedIn HTTP
+429 responses. The collector logged only `HTTPError`, then discarded each affected
+posting without retrying or explaining whether rate limiting was the cause.
+
+#### 2. Background context
+
+Search-card discovery remains browser-based, while one guest-posting HTTP request is
+needed for each card's details. Those requests share the same LinkedIn rate limit, and
+many workers can start them almost simultaneously. A `Retry-After` header may specify a
+longer wait than the application's normal cooldown.
+
+#### 3. Decision taken
+
+The collector now uses at most two detail-request workers by default and spaces all
+request starts by at least 0.75 seconds. On a 429, it delays the shared request gate for
+30 seconds or the larger numeric `Retry-After` value, retries that posting once, and
+logs the rate-limit event distinctly. A posting that remains rate limited is skipped so
+the remaining search results can still be scored and stored.
+
+#### 4. Consequences
+
+Normal searches take longer but generate a much lower request burst. A confirmed 429
+pauses every queued detail fetch rather than repeatedly increasing the rate-limit
+pressure. Logs now distinguish a rate-limit retry from other HTTP failures; exhausted
+fallbacks reduce the result count instead of causing the whole search to fail.
+
 ### Verification configuration
 
 #### 1. Problem solved

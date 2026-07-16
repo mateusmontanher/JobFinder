@@ -1,8 +1,14 @@
 import time
 
 import pytest
+import requests
 
-from webscrapping.collector import LinkedInCollector, is_the_title_in_blacklist, normalize_title
+from webscrapping.collector import (
+    LinkedInCollector,
+    bundled_chromium_executable,
+    is_the_title_in_blacklist,
+    normalize_title,
+)
 from webscrapping.search import build_search_url
 
 
@@ -82,8 +88,16 @@ def test_public_url_falls_back_when_title_click_fails():
 
 
 class FakeResponse:
-    def __init__(self, text): self.text = text
-    def raise_for_status(self): return None
+    def __init__(self, text, *, status_code=200, headers=None):
+        self.text = text
+        self.status_code = status_code
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            error = requests.HTTPError(f"HTTP {self.status_code}")
+            error.response = self
+            raise error
 
 
 def posting_html(identifier: str, *, title: str | None = None) -> str:
@@ -133,7 +147,11 @@ def test_bounded_posting_collection_runs_concurrently():
         identifier = url.rsplit("/", 1)[-1]
         return FakeResponse(posting_html(identifier))
 
-    collector = LinkedInCollector(http_get=get, maximum_workers=10)
+    collector = LinkedInCollector(
+        http_get=get,
+        maximum_workers=4,
+        minimum_request_interval_seconds=0,
+    )
     started = time.perf_counter()
     jobs = list(collector._postings([str(index) for index in range(20)]))
     elapsed = time.perf_counter() - started
@@ -147,3 +165,73 @@ def test_collector_rejects_unsafe_worker_counts():
         LinkedInCollector(maximum_workers=0)
     with pytest.raises(ValueError):
         LinkedInCollector(request_timeout_seconds=0)
+    with pytest.raises(ValueError):
+        LinkedInCollector(minimum_request_interval_seconds=-1)
+    with pytest.raises(ValueError):
+        LinkedInCollector(rate_limit_cooldown_seconds=0)
+    with pytest.raises(ValueError):
+        LinkedInCollector(rate_limit_retries=-1)
+
+
+def test_posting_requests_are_paced():
+    now = [0.0]
+    sleeps = []
+    request_times = []
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    def get(url, **_kwargs):
+        request_times.append(now[0])
+        return FakeResponse(posting_html(url.rsplit("/", 1)[-1]))
+
+    collector = LinkedInCollector(
+        http_get=get,
+        maximum_workers=1,
+        minimum_request_interval_seconds=0.75,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+
+    assert collector._posting("1") is not None
+    assert collector._posting("2") is not None
+    assert request_times == [0.0, 0.75]
+    assert sleeps == [0.75]
+
+
+def test_429_waits_for_retry_after_and_retries_once():
+    now = [0.0]
+    sleeps = []
+    calls = []
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    def get(url, **_kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            return FakeResponse("", status_code=429, headers={"Retry-After": "4"})
+        return FakeResponse(posting_html("1"))
+
+    collector = LinkedInCollector(
+        http_get=get,
+        minimum_request_interval_seconds=0,
+        rate_limit_cooldown_seconds=1,
+        clock=lambda: now[0],
+        sleeper=sleeper,
+    )
+
+    assert collector._posting("1").identifier == "1"
+    assert len(calls) == 2
+    assert sleeps == [4.0]
+
+
+def test_bundled_chromium_is_discovered_from_frozen_runtime(tmp_path):
+    executable = tmp_path / "playwright-browsers" / "chromium-1223" / "chrome-win64" / "chrome.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+
+    assert bundled_chromium_executable(tmp_path) == str(executable)
+    assert bundled_chromium_executable(tmp_path / "missing") is None
